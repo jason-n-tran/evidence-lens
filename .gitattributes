@@ -1,0 +1,7 @@
+# Shell scripts and configs consumed inside Linux containers must keep LF
+# endings, even when checked out on Windows. CRLF breaks `sh` ("illegal
+# option" on the shebang/set line) and confuses linux config parsers.
+*.sh            text eol=lf
+*.tmpl          text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf

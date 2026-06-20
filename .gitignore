@@ -1,0 +1,93 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*-secret.yaml
+secrets/
+!*.example
+
+# Sops-encrypted files are committed; their decrypted forms are not
+*.dec.yaml
+*.dec.json
+
+# Node
+node_modules/
+.next/
+.turbo/
+.pnp.*
+.yarn/cache/
+.yarn/install-state.gz
+dist/
+build/
+*.tsbuildinfo
+
+# Go
+*.exe
+*.test
+*.out
+vendor/
+bin/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+dist/
+build/
+.uv-cache/
+
+# Editors / OS
+.idea/
+.vscode/
+!.vscode/settings.json.example
+.DS_Store
+Thumbs.db
+*.swp
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+
+# Docker
+*.tar
+
+# Service-specific
+gateway/storage/
+gateway/bootstrap/cache/
+frontend/.next/
+frontend/out/
+embedder/models/
+process/cache/
+ingest/.watermarks/
+infra/grafana/data/
+
+# Generated proto code is committed; do not ignore proto/gen/
+
+# Test artifacts
+coverage/
+*.lcov
+playwright-report/
+test-results/
+
+# Local notes
+NOTES.md
+TODO.local.md
+.env.workingpc
+.env.truenas
+.env.vps
+.env.dev.bak
