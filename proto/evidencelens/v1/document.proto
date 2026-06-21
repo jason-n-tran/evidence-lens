@@ -1,0 +1,219 @@
+// Canonical document schema for EvidenceLens.
+//
+// Every ingester emits records that conform to `Document`. The processor
+// enriches and writes the result to NATS for the indexer (see events.proto).
+//
+// Spec source of truth: docs/EVIDENCELENS_SPEC.md section 3.1.
+// Any change requires an `rfc-interface` PR per docs/rfcs/README.md.
+
+syntax = "proto3";
+
+package evidencelens.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// A canonicalized biomedical evidence record. All ingesters produce these;
+// the processor enriches and the indexer fans out to Meilisearch / Milvus /
+// Neo4j.
+message Document {
+  // ---- Identity ----
+
+  // Namespaced primary key. Examples: "pubmed:12345678",
+  // "nct:NCT01234567", "fda-recall:F-2023-1234".
+  string id = 1;
+
+  // Source corpus key. Examples: "pubmed", "biorxiv", "medrxiv", "ctgov",
+  // "ictrp", "openfda-drug", "openfda-device", "openalex", "crossref",
+  // "unpaywall", "nih-reporter", "open-payments", "cochrane", "guideline".
+  string source = 2;
+
+  // The source's native record id (PMID, DOI, NCT, FDA recall id, etc).
+  string source_native_id = 3;
+
+  // ---- Cross-system identifiers ----
+
+  optional string doi = 4;
+  optional string pmid = 5;
+  optional string pmcid = 6;
+  optional string nct_id = 7;
+  optional string ictrp_id = 8;
+
+  // ---- Core content ----
+
+  string title = 10;
+  string abstract = 11;
+
+  // Populated only if the source license permits redistribution
+  // (e.g. PMC OA Subset, CC-BY preprints). For closed-access content,
+  // EvidenceLens stores metadata only and links out via canonical_url.
+  optional string full_text = 12;
+
+  // Deep link to the authoritative source page for the record.
+  string canonical_url = 13;
+
+  // ---- Provenance ----
+
+  google.protobuf.Timestamp ingested_at = 20;
+  google.protobuf.Timestamp source_updated_at = 21;
+  google.protobuf.Timestamp published_at = 22;
+
+  // SPDX identifier (e.g. "CC-BY-4.0", "CC0-1.0") or verbatim license string
+  // when no SPDX id is available (e.g. "U.S. Government work").
+  string license = 23;
+
+  // Pointer into the object store (MinIO) raw archive at
+  // `raw/{source}/{YYYY-MM-DD}/{id}.json.gz`. Used for reprocessing without
+  // re-fetching from the upstream API.
+  string object_raw_key = 24;
+
+  // ---- Authors ----
+
+  repeated Author authors = 30;
+
+  // ---- Classification ----
+
+  StudyType study_type = 40;
+  repeated string mesh_terms = 41;
+  repeated string keywords = 42;
+  optional Journal journal = 43;
+  optional Trial trial = 44;
+  optional Regulatory regulatory = 45;
+
+  // ---- Citation & influence ----
+
+  // Total inbound citation count from OpenAlex.
+  int64 citation_count = 50;
+
+  // PageRank computed by `page-rank` over the OpenAlex citation graph.
+  double citation_pagerank = 51;
+
+  // Outbound citation IDs in namespaced form, e.g. "pubmed:12345678".
+  // Populated by parsers that have structured reference lists (e.g. PubMed XML).
+  // Used by the indexer to create [:CITES] edges in Neo4j.
+  repeated string citations = 52;
+
+  // ---- Funding ----
+
+  // Joined later from NIH RePORTER / NSF Awards / etc.
+  repeated FundingSource funding = 60;
+
+  // ---- Embedding ----
+
+  // 1024-d when produced by BGE-M3 (default) or 384-d when produced by
+  // BGE-small-en-v1.5 (CPU fallback). The model identity is in
+  // `embedding_model` so consumers can validate vector compatibility.
+  repeated float embedding = 70;
+  string embedding_model = 71;
+}
+
+// One author of a document. The `payments` field is populated by the
+// processor's author-payment-joiner (see spec §5.2 step 6).
+message Author {
+  string display_name = 1;
+  optional string given_name = 2;
+  optional string family_name = 3;
+  optional string orcid = 4;
+  optional string affiliation = 5;
+  repeated AuthorPayment payments = 10;
+}
+
+// One CMS Open Payments record matched to an author by the processor's
+// fuzzy joiner (rapidfuzz, default threshold 0.90). Conservative bias:
+// false positives are worse than false negatives. See
+// docs/sources/open-payments.md for matching policy.
+message AuthorPayment {
+  string sponsor_name = 1;
+  string year = 2;
+  double amount_usd = 3;
+
+  // One of: "consulting", "honoraria", "research", "travel", "ownership",
+  // "other".
+  string payment_type = 4;
+
+  // CMS Open Payments ID from the bulk CSV.
+  string source_record_id = 5;
+}
+
+// Journal metadata. `is_predatory` checks ISSN against a periodically
+// refreshed Beall's list snapshot.
+message Journal {
+  string name = 1;
+  optional string issn = 2;
+  optional string publisher = 3;
+  optional double impact_factor = 4;
+  bool is_predatory = 5;
+}
+
+// Coarse classification of evidence type, used as an LTR feature and for
+// faceted search filtering. Values track those in spec §3.1.
+enum StudyType {
+  STUDY_TYPE_UNSPECIFIED = 0;
+  RCT = 1;
+  META_ANALYSIS = 2;
+  SYSTEMATIC_REVIEW = 3;
+  OBSERVATIONAL = 4;
+  CASE_REPORT = 5;
+  PREPRINT = 6;
+  TRIAL_REGISTRY = 7;
+  REGULATORY = 8;
+  GUIDELINE = 9;
+  REVIEW = 10;
+  EDITORIAL = 11;
+  OTHER = 99;
+}
+
+// Clinical trial registry record. Populated when the document originates in
+// ClinicalTrials.gov, WHO ICTRP, or another registry.
+message Trial {
+  // Registry identifier, e.g. "ctgov", "ictrp:eu-ctis", "ictrp:chictr".
+  string registry = 1;
+
+  // One of: "recruiting", "active_not_recruiting", "completed",
+  // "terminated", "suspended", "withdrawn", "unknown".
+  string status = 2;
+
+  // One of: "early_phase_1", "phase_1", "phase_2", "phase_3", "phase_4",
+  // "not_applicable".
+  string phase = 3;
+
+  repeated string conditions = 4;
+  repeated string interventions = 5;
+
+  // Free-form city / region / country strings as published by the registry.
+  repeated string locations = 6;
+
+  optional int64 enrollment = 7;
+  optional google.protobuf.Timestamp start_date = 8;
+  optional google.protobuf.Timestamp completion_date = 9;
+  optional string primary_outcome = 10;
+}
+
+// Regulatory action record. Populated for openFDA, EMA, MHRA, Health
+// Canada, TGA, PMDA documents.
+message Regulatory {
+  // One of: "fda", "ema", "mhra", "health_canada", "tga", "pmda".
+  string agency = 1;
+
+  // One of: "approval", "recall", "adverse_event", "510k_clearance",
+  // "label_update".
+  string event_type = 2;
+
+  string product_name = 3;
+  optional string drug_class = 4;
+
+  // For recalls, FDA classification: "I" (highest risk) | "II" | "III".
+  optional string recall_class = 5;
+
+  optional string reason = 6;
+  optional string action = 7;
+}
+
+// One funding source for a document. Populated from NIH RePORTER, NSF
+// Awards, or similar. Multiple instances allowed per document.
+message FundingSource {
+  // Funder name, e.g. "NIH", "NSF", "Wellcome Trust".
+  string funder = 1;
+  optional string grant_id = 2;
+  optional double amount_usd = 3;
+  optional string fiscal_year = 4;
+}

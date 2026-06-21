@@ -1,0 +1,130 @@
+// Scorer service contract.
+//
+// The scorer-pool is a Python gRPC server on the NAS that fans out to the
+// four sub-scorers (BM25 / vector / citation / recency), fuses with
+// Reciprocal Rank Fusion (k=60), and reranks the top 50 with an XGBoost
+// LambdaMART head. Results stream back to the gateway in three waves
+// (first 5 @ 200ms, next 10 @ 500ms, final 35 @ 1000ms).
+//
+// Spec source of truth: docs/EVIDENCELENS_SPEC.md sections 5.5 and 6.
+
+syntax = "proto3";
+
+package evidencelens.v1;
+
+import "evidencelens/v1/document.proto";
+import "google/protobuf/timestamp.proto";
+
+service ScorerService {
+  // Server-streaming search. The server emits multiple PartialResults
+  // messages over the lifetime of a single request, each refining the
+  // ranking with more sub-scorer signals. Clients should render each wave
+  // immediately and replace prior content.
+  //
+  // Deadline propagation: the gateway sets `grpc-timeout` (e.g. 800m).
+  // The scorer subdivides budget across sub-scorers and emits whatever it
+  // has when the deadline expires.
+  rpc Search(SearchRequest) returns (stream PartialResults);
+
+  // Synchronous health probe used by docker-compose / Kubernetes / OTel.
+  rpc Healthz(ScorerHealthzRequest) returns (ScorerHealthzResponse);
+}
+
+message SearchRequest {
+  // Free-text query. Synonyms expansion happens server-side
+  // (config/synonyms.json) so the client passes raw user input.
+  string query = 1;
+
+  // Optional facet / range filters. All filters AND together.
+  SearchFilters filters = 2;
+
+  // Maximum results to return across all waves. Default 50, max 200.
+  int32 top_k = 3;
+
+  // A/B variant assignment from Firestore lookup, used as a feature for
+  // experiment-gated scoring tweaks (e.g. recency_half_life experiment).
+  // Empty when no experiment is active. See spec §11.
+  string variant = 4;
+
+  // Anonymous session id. Used only for click attribution; never logged
+  // into BYOK telemetry, never tied to PII.
+  string session_id = 5;
+}
+
+message SearchFilters {
+  repeated StudyType study_types = 1;
+
+  // Inclusive year range. Zero values mean "no bound".
+  int32 published_year_min = 2;
+  int32 published_year_max = 3;
+
+  repeated string mesh_terms = 4;
+  repeated string sources = 5; // e.g. ["pubmed", "ctgov"]
+  repeated string licenses = 6; // e.g. ["CC-BY-4.0"]
+
+  // If true, only include documents whose authors have at least one
+  // matched Open Payments record. Used by COI-aware queries.
+  bool only_with_coi = 7;
+
+  // If true, only include documents with stored full text.
+  bool only_with_full_text = 8;
+
+  // If true, exclude journals flagged as predatory by Beall's list.
+  bool exclude_predatory_journals = 9;
+}
+
+// Streamed back from the scorer in waves. Each message includes the cursor
+// metadata so the client can know whether more is coming.
+message PartialResults {
+  repeated ScoredResult results = 1;
+
+  // Monotonically increasing across waves of a single request. First wave
+  // is 1.
+  int32 wave = 2;
+
+  // True on the final message of a stream. Lets the client commit final
+  // analytics events.
+  bool is_final = 3;
+
+  // Wall-clock latency from request start to this wave being sent. Used
+  // by the gateway to populate the WebSocket message and by Grafana for
+  // wave-latency histograms.
+  int64 elapsed_ms = 4;
+}
+
+// One scored search result. The full Document is included so the gateway
+// does not need a follow-up fetch for the result list view; the document
+// drawer fetches additional fields (full_text, citation neighborhood) on
+// demand via DocumentService.
+message ScoredResult {
+  Document document = 1;
+
+  // Final fused + LTR-reranked score. Higher is better. Not normalized to
+  // any fixed range; only meaningful for ordering within a single response.
+  double final_score = 2;
+
+  // Sub-scores for explainability and debugging. Consumed by the
+  // frontend's "why this result?" affordance and by LTR retraining.
+  ScoreBreakdown breakdown = 3;
+}
+
+message ScoreBreakdown {
+  double bm25_score = 1;
+  double vector_score = 2;
+  double citation_pagerank = 3;
+  double recency_score = 4;
+  double rrf_score = 5;
+  double ltr_score = 6;
+  string ltr_model_version = 7; // e.g. "ltr_v3"
+}
+
+message ScorerHealthzRequest {}
+
+message ScorerHealthzResponse {
+  // "ok" | "degraded" | "down". "degraded" means at least one sub-scorer
+  // is offline but the service can still serve queries with reduced
+  // recall (e.g. citation scorer down because Neo4j is rebuilding).
+  string status = 1;
+  repeated string degraded_components = 2;
+  google.protobuf.Timestamp checked_at = 3;
+}

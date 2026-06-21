@@ -1,0 +1,27 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/evidencelens/evidencelens/proto/gen/go
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: gen/go
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: gen/go
+    opt:
+      - paths=source_relative
+      - require_unimplemented_servers=false
+  - remote: buf.build/protocolbuffers/python
+    out: gen/python
+  - remote: buf.build/grpc/python
+    out: gen/python
+  - remote: buf.build/community/stephenh-ts-proto
+    out: gen/typescript
+    opt:
+      - outputServices=grpc-js
+      - esModuleInterop=true
+      - useExactTypes=false
+inputs:
+  - directory: .

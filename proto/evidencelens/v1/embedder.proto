@@ -1,0 +1,85 @@
+// Embedder service contract.
+//
+// The embedder is a Python gRPC server backed by vLLM serving BGE-M3 on
+// the user's TrueNAS GPU. It supports bidirectional streaming so the
+// processor can pipeline chunk batches without head-of-line blocking, and
+// so the scorer's vector sub-scorer can amortize the round-trip when
+// embedding query strings during search.
+//
+// Spec source of truth: docs/EVIDENCELENS_SPEC.md section 5.3.
+
+syntax = "proto3";
+
+package evidencelens.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service EmbedderService {
+  // Bidirectional streaming embedding. The server batches incoming
+  // requests dynamically (batch=32, max-wait=25ms) for GPU throughput.
+  // Responses are emitted in arrival order; clients should match by
+  // request_id rather than position.
+  rpc Embed(stream EmbedRequest) returns (stream EmbedResponse);
+
+  // Single-shot variant for callers that don't want to manage a stream
+  // (e.g. one-off CLI tools, tests). Internally rate-limited to avoid
+  // starving the streaming queue.
+  rpc EmbedOnce(EmbedRequest) returns (EmbedResponse);
+
+  // Health probe. Returns "degraded" when running on the CPU fallback
+  // (BGE-small-en-v1.5, 384-d) instead of GPU BGE-M3 (1024-d). Consumers
+  // should validate `embedding_model` on every response, not just at
+  // startup.
+  rpc Healthz(EmbedderHealthzRequest) returns (EmbedderHealthzResponse);
+}
+
+message EmbedRequest {
+  // Caller-chosen id propagated to the response. Required because the
+  // server may reorder under dynamic batching. Use a uuid or any
+  // monotonic counter that's unique within the stream.
+  string request_id = 1;
+
+  // Texts to embed. The server treats each entry independently — it does
+  // not produce a single mean-pooled vector across the array. The
+  // processor mean-pools per-document at its own layer.
+  //
+  // Length cap: 32 per message. Longer batches will be split server-side
+  // and merged into a single response with the same request_id.
+  repeated string texts = 2;
+}
+
+message EmbedResponse {
+  string request_id = 1;
+  repeated EmbeddingVector embeddings = 2;
+
+  // Identifies the model that produced these vectors. Critical for
+  // downstream consumers (e.g. Milvus collection_name="evidence_v1"
+  // assumes 1024-d BGE-M3; if the embedder degrades to 384-d the indexer
+  // must reject and the operator must rebuild the collection).
+  string embedding_model = 3;
+}
+
+message EmbeddingVector {
+  repeated float values = 1;
+
+  // 1024 (BGE-M3) or 384 (BGE-small-en-v1.5 fallback). Stated explicitly
+  // so consumers can validate before write without computing length.
+  int32 dim = 2;
+}
+
+message EmbedderHealthzRequest {}
+
+message EmbedderHealthzResponse {
+  // "ok" — GPU + BGE-M3 healthy.
+  // "degraded" — running CPU fallback (BGE-small-en-v1.5, 384-d).
+  // "down" — neither path serving.
+  string status = 1;
+
+  // Active model identifier. Same value will appear in EmbedResponse.
+  string embedding_model = 2;
+
+  // Free-text reason populated when status != "ok".
+  string detail = 3;
+
+  google.protobuf.Timestamp checked_at = 4;
+}

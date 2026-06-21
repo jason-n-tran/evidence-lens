@@ -1,0 +1,70 @@
+// Event payload schemas for inter-service communication.
+//
+// Carriers:
+//   - GCP Pub/Sub: raw-docs (publisher: ingesters)
+//   - GCP Pub/Sub: click-events (publisher: click-logger Worker)
+//   - NATS JetStream: indexable-docs.{source} (publisher: processor)
+//   - NATS JetStream: recall-fanout (publisher: fda-ingester recall path)
+//   - NATS JetStream: dlq.indexer (dead-letter)
+//
+// See docs/api/events.md for the full topic catalog and routing diagram.
+// Spec source of truth: docs/EVIDENCELENS_SPEC.md section 3.6.
+
+syntax = "proto3";
+
+package evidencelens.v1;
+
+import "evidencelens/v1/document.proto";
+import "google/protobuf/timestamp.proto";
+
+// Published by ingesters to GCP Pub/Sub topic `raw-docs`. The payload
+// itself does not contain the document body — consumers fetch from the
+// object store (MinIO) at `object_key` to keep Pub/Sub message size small.
+message RawDocEvent {
+  string source = 1;
+  string doc_id = 2;
+  string object_key = 3;
+  google.protobuf.Timestamp ingested_at = 4;
+}
+
+// Published by the processor to NATS subject `indexable-docs.{source}`
+// after parsing, normalizing, entity-linking, chunking, embedding, and
+// joining Open Payments. The full enriched Document is inline because the
+// indexer needs every field and NATS has no per-message size penalty
+// within JetStream stream limits.
+message IndexableDocEvent {
+  Document document = 1;
+  google.protobuf.Timestamp processed_at = 2;
+}
+
+// Published by the FDA recall priority lane in the openFDA ingester to NATS
+// subject `recall-fanout`. The frontend's RecallTicker subscribes via the
+// gateway WebSocket. SLO: end-to-end ≤ 1 minute p95 (spec §14.1).
+message RecallEvent {
+  string recall_id = 1;
+  string agency = 2;
+  string product_name = 3;
+  string drug_class = 4;
+
+  // FDA classification: "I" (highest risk) | "II" | "III".
+  string recall_class = 5;
+
+  google.protobuf.Timestamp emitted_at = 6;
+}
+
+// Published by the click-logger Cloudflare Worker to GCP Pub/Sub topic
+// `click-events`. Drains nightly into BigQuery `analytics.clicks` table
+// (partitioned by server_ts, clustered by variant + query_text). Used by
+// the LTR retraining job and the interleaving evaluator.
+message ClickEvent {
+  string session_id = 1;
+  string query_id = 2;
+  string clicked_doc_id = 3;
+  int32 clicked_position = 4;
+
+  // A/B variant for whichever experiment was active when the result was
+  // shown. Empty when no experiment is active. See spec §11.
+  string variant = 5;
+
+  google.protobuf.Timestamp at = 6;
+}
