@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<eSearchResult>
+  <Count>3</Count>
+  <RetMax>3</RetMax>
+  <RetStart>0</RetStart>
+  <QueryKey>1</QueryKey>
+  <WebEnv>NCID_1_synthetic_test_envelope</WebEnv>
+  <IdList>
+    <Id>40000001</Id>
+    <Id>40000002</Id>
+    <Id>40000003</Id>
+  </IdList>
+  <TranslationSet/>
+  <QueryTranslation>2026/04/01[EDAT]:3000[EDAT]</QueryTranslation>
+</eSearchResult>

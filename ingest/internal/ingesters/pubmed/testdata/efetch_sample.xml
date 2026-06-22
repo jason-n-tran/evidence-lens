@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">40000001</PMID>
+      <Article PubModel="Print-Electronic">
+        <Journal>
+          <ISSN IssnType="Electronic">1533-4406</ISSN>
+          <Title>The New England Journal of Medicine</Title>
+          <JournalIssue><PubDate><Year>2026</Year><Month>Mar</Month><Day>15</Day></PubDate></JournalIssue>
+        </Journal>
+        <ArticleTitle>Test Article on Heart Failure Outcomes</ArticleTitle>
+        <Abstract>
+          <AbstractText Label="BACKGROUND">Background text.</AbstractText>
+          <AbstractText Label="METHODS">Methods text.</AbstractText>
+          <AbstractText Label="RESULTS">Results text.</AbstractText>
+        </Abstract>
+        <AuthorList>
+          <Author><LastName>Smith</LastName><ForeName>Jane</ForeName><Initials>J</Initials>
+            <AffiliationInfo><Affiliation>Mayo Clinic, Rochester, MN, USA</Affiliation></AffiliationInfo>
+            <Identifier Source="ORCID">https://orcid.org/0000-0001-2345-6789</Identifier>
+          </Author>
+        </AuthorList>
+        <PublicationTypeList>
+          <PublicationType UI="D016428">Randomized Controlled Trial</PublicationType>
+        </PublicationTypeList>
+      </Article>
+      <MeshHeadingList>
+        <MeshHeading><DescriptorName UI="D006333">Heart Failure</DescriptorName></MeshHeading>
+      </MeshHeadingList>
+      <KeywordList>
+        <Keyword>SGLT2</Keyword>
+      </KeywordList>
+    </MedlineCitation>
+    <PubmedData>
+      <ArticleIdList>
+        <ArticleId IdType="pubmed">40000001</ArticleId>
+        <ArticleId IdType="doi">10.1056/NEJMoa.test.001</ArticleId>
+      </ArticleIdList>
+      <History>
+        <PubMedPubDate PubStatus="entrez"><Year>2026</Year><Month>4</Month><Day>1</Day></PubMedPubDate>
+      </History>
+    </PubmedData>
+  </PubmedArticle>
+</PubmedArticleSet>
