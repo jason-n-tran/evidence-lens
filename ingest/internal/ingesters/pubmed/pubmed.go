@@ -277,3 +277,131 @@ type esearchResult struct {
 	Count      int    `xml:"Count"`
 	RetMax     int    `xml:"RetMax"`
 }
+
+func (i *Ingester) esearch(ctx context.Context, sinceDate string) ([]string, error) {
+	q := url.Values{}
+	q.Set("db", "pubmed")
+	q.Set("term", fmt.Sprintf("%s[EDAT]:3000[EDAT]", sinceDate))
+	q.Set("retmax", "10000")
+	q.Set("usehistory", "y")
+	q.Set("tool", i.cfg.Tool)
+	q.Set("email", i.cfg.Email)
+	if i.cfg.APIKey != "" {
+		q.Set("api_key", i.cfg.APIKey)
+	}
+	url := fmt.Sprintf("%s/esearch.fcgi?%s", eutilsBase, q.Encode())
+
+	body, err := i.fetcher.Get(ctx, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	var r esearchResult
+	if err := xml.Unmarshal(body, &r); err != nil {
+		return nil, fmt.Errorf("parse esearch: %w", err)
+	}
+	return r.IDList.ID, nil
+}
+
+type efetchRaw struct {
+	PMID  string
+	Bytes []byte
+	EDAT  string
+}
+
+func (i *Ingester) efetch(ctx context.Context, pmids []string) ([]efetchRaw, string, error) {
+	q := url.Values{}
+	q.Set("db", "pubmed")
+	q.Set("id", strings.Join(pmids, ","))
+	q.Set("retmode", "xml")
+	q.Set("tool", i.cfg.Tool)
+	q.Set("email", i.cfg.Email)
+	if i.cfg.APIKey != "" {
+		q.Set("api_key", i.cfg.APIKey)
+	}
+	url := fmt.Sprintf("%s/efetch.fcgi?%s", eutilsBase, q.Encode())
+
+	body, err := i.fetcher.Get(ctx, url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Parse just enough to extract PMIDs and EDATs; processor does full
+	// parse. We split the multi-record XML by PubmedArticle and store
+	// each article's bytes separately so re-processing one record
+	// doesn't require re-fetching the whole batch.
+	records, maxEDAT := splitArticles(body)
+	return records, maxEDAT, nil
+}
+
+// splitArticles splits a PubmedArticleSet document into per-article
+// byte slices and returns the max EDAT seen.
+func splitArticles(body []byte) ([]efetchRaw, string) {
+	type article struct {
+		PMID    string `xml:"MedlineCitation>PMID"`
+		History struct {
+			PubMedPubDate []struct {
+				Status string `xml:"PubStatus,attr"`
+				Year   string `xml:"Year"`
+				Month  string `xml:"Month"`
+				Day    string `xml:"Day"`
+			} `xml:"PubMedPubDate"`
+		} `xml:"PubmedData>History"`
+	}
+
+	var maxEDAT string
+	var out []efetchRaw
+
+	// Scan raw bytes for <PubmedArticle...>...</PubmedArticle> spans.
+	// We cannot use xml.DecodeElement to capture raw bytes — it consumes
+	// the token stream without preserving the original content. Instead we
+	// locate each article by byte offset and pass that slice directly to
+	// xml.Unmarshal.
+	//
+	// NOTE: We use "<PubmedArticle>" (with trailing bracket) or "<PubmedArticle "
+	// to avoid matching the "<PubmedArticleSet>" wrapper tag.
+	closeTag := []byte("</PubmedArticle>")
+	remaining := body
+	for {
+		start := bytes.Index(remaining, []byte("<PubmedArticle>"))
+		if start < 0 {
+			start = bytes.Index(remaining, []byte("<PubmedArticle "))
+		}
+		if start < 0 {
+			break
+		}
+
+		end := bytes.Index(remaining[start:], closeTag)
+		if end < 0 {
+			break
+		}
+		end += start + len(closeTag)
+		articleBytes := remaining[start:end]
+		remaining = remaining[end:]
+
+		var a article
+		if err := xml.Unmarshal(articleBytes, &a); err != nil || a.PMID == "" {
+			// Fallback: scan for <PMID>digits</PMID> directly.
+			a.PMID = extractPMID(articleBytes)
+		}
+		if a.PMID == "" {
+			continue // skip unparseable articles
+		}
+
+		edat := ""
+		for _, p := range a.History.PubMedPubDate {
+			if p.Status == "entrez" || p.Status == "pubmed" {
+				edat = fmt.Sprintf("%s/%s/%s", p.Year, padDate(p.Month), padDate(p.Day))
+				break
+			}
+		}
+		if edat > maxEDAT {
+			maxEDAT = edat
+		}
+		out = append(out, efetchRaw{
+			PMID:  a.PMID,
+			Bytes: articleBytes,
+			EDAT:  edat,
+		})
+	}
+	return out, maxEDAT
+}
