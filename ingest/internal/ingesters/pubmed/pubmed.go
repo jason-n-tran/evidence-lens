@@ -405,3 +405,46 @@ func splitArticles(body []byte) ([]efetchRaw, string) {
 	}
 	return out, maxEDAT
 }
+
+// extractPMID scans raw article bytes for <PMID ...>digits</PMID>.
+func extractPMID(b []byte) string {
+	start := bytes.Index(b, []byte("<PMID"))
+	if start < 0 {
+		return ""
+	}
+	gt := bytes.IndexByte(b[start:], '>')
+	if gt < 0 {
+		return ""
+	}
+	gt += start + 1
+	end := bytes.Index(b[gt:], []byte("</PMID>"))
+	if end < 0 {
+		return ""
+	}
+	pmid := strings.TrimSpace(string(b[gt : gt+end]))
+	for _, c := range pmid {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	return pmid
+}
+
+func padDate(s string) string {
+	if len(s) == 1 {
+		return "0" + s
+	}
+	return s
+}
+
+func chunk(s []string, n int) [][]string {
+	var out [][]string
+	for i := 0; i < len(s); i += n {
+		end := i + n
+		if end > len(s) {
+			end = len(s)
+		}
+		out = append(out, s[i:end])
+	}
+	return out
+}
