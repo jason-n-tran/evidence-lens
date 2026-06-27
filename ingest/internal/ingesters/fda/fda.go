@@ -204,3 +204,45 @@ func digitsOnly(s string) string {
 	}
 	return string(b)
 }
+
+func pickDateField(ep string) string {
+	switch ep {
+	case "drug/drugsfda":
+		return "submissions.submission_status_date"
+	case "drug/enforcement":
+		return "report_date"
+	case "device/event":
+		return "date_received"
+	case "device/510k":
+		return "decision_date"
+	}
+	return "report_date"
+}
+
+func pickID(ep string, r map[string]any) string {
+	keys := map[string]string{
+		"drug/drugsfda":    "application_number",
+		"drug/enforcement": "recall_number",
+		"device/event":     "report_number",
+		"device/510k":      "k_number",
+	}
+	if k, ok := keys[ep]; ok {
+		if v, ok := r[k].(string); ok {
+			return v
+		}
+	}
+	return fmt.Sprintf("%v", r["@id"])
+}
+
+func sanitize(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '/' {
+			out = append(out, '-')
+		} else {
+			out = append(out, c)
+		}
+	}
+	return string(out)
+}
