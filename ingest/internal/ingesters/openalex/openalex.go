@@ -158,3 +158,148 @@ func (i *Ingester) streamPart(ctx context.Context, key string, c *ingestcommon.C
 	}
 	return scanner.Err()
 }
+
+// runREST fetches works via the REST API, filtered by publication date.
+//
+// NOTE: from_updated_date / from_created_date are paywalled (HTTP 429 "Plan
+// upgrade required") on the free tier. from_publication_date is free. The
+// tradeoff is that we filter by publication date, not update date, so edits to
+// older works are not picked up — acceptable for a free, self-hosted deployment.
+func (i *Ingester) runREST(ctx context.Context) (ingestcommon.RunResult, error) {
+	hwm, _ := i.wm.Get(ctx, "openalex")
+	if hwm == "" {
+		if bs := ingestcommon.BackfillSince(); bs != "" {
+			hwm = bs
+		} else {
+			hwm = time.Now().AddDate(0, 0, -2).Format("2006-01-02")
+		}
+	}
+	var counters ingestcommon.Counters
+	latestSeen := "" // max publication_date this run (ISO sorts chronologically)
+
+	cursor := "*"
+	for int(counters.Fetched.Load()) < i.cfg.MaxPerRun {
+		q := url.Values{}
+		// type:article excludes non-article entities (e.g. type "paratext" —
+		// journal front-matter/descriptions — which otherwise show up with a
+		// journal name as the title and no real article content).
+		q.Set("filter", "from_publication_date:"+hwm+",type:article")
+		q.Set("per-page", "200")
+		q.Set("cursor", cursor)
+		// referenced_works is omitted from the default response (citations would
+		// be empty); an explicit select pulls it back (verified free). The list
+		// must include every field the processor's openalex parser reads.
+		q.Set("select", "id,ids,doi,display_name,type,publication_date,publication_year,"+
+			"authorships,abstract_inverted_index,referenced_works,cited_by_count,"+
+			"primary_location,open_access,concepts")
+		body, err := i.fetcher.Get(ctx, "https://api.openalex.org/works?"+q.Encode(), nil)
+		if err != nil {
+			// Do NOT advance the watermark on a failed fetch: record the error
+			// and return it so ingestion_state shows status=failed. The previous
+			// code swallowed errors and still wrote today's watermark, which
+			// silently poisoned every subsequent run's window.
+			i.logger.Error("openalex REST fetch failed", "err", err, "hwm", hwm)
+			_ = i.wm.Set(ctx, "openalex", hwm, "failed", err.Error())
+			return ingestcommon.RunResult{
+				DocsFetched:   counters.Fetched.Load(),
+				DocsArchived:  counters.Archived.Load(),
+				DocsPublished: counters.Published.Load(),
+				HighWatermark: hwm,
+			}, err
+		}
+		// Decode results as raw JSON so the FULL upstream work (abstract_inverted_index,
+		// authorships, publication_date, etc.) is archived verbatim. Decoding straight
+		// into openalexWork and re-marshaling would strip every field not in that
+		// struct, leaving the parser almost nothing (same class of bug as the old
+		// preprint ingester).
+		var resp struct {
+			Results []json.RawMessage `json:"results"`
+			Meta    struct {
+				NextCursor string `json:"next_cursor"`
+			} `json:"meta"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			i.logger.Error("openalex REST decode failed", "err", err)
+			_ = i.wm.Set(ctx, "openalex", hwm, "failed", "decode: "+err.Error())
+			return ingestcommon.RunResult{
+				DocsFetched:   counters.Fetched.Load(),
+				DocsArchived:  counters.Archived.Load(),
+				DocsPublished: counters.Published.Load(),
+				HighWatermark: hwm,
+			}, err
+		}
+		if len(resp.Results) == 0 {
+			break
+		}
+		for _, raw := range resp.Results {
+			counters.Fetched.Add(1)
+			var w openalexWork
+			if err := json.Unmarshal(raw, &w); err != nil {
+				counters.Failed.Add(1)
+				continue
+			}
+			if w.PublicationDate != "" {
+				latestSeen = ingestcommon.MaxDate(latestSeen, w.PublicationDate)
+			}
+			i.publishWork(ctx, &w, raw, &counters)
+		}
+		if resp.Meta.NextCursor == "" {
+			break
+		}
+		cursor = resp.Meta.NextCursor
+	}
+
+	// Empty -> keep; backfill + hit cap -> resume at latest pub date; else today.
+	newHWM := ingestcommon.NextWatermark(hwm, time.Now().Format("2006-01-02"),
+		int(counters.Fetched.Load()), i.cfg.MaxPerRun, latestSeen)
+	_ = i.wm.Set(ctx, "openalex", newHWM, "idle", "")
+	return ingestcommon.RunResult{
+		DocsFetched:   counters.Fetched.Load(),
+		DocsArchived:  counters.Archived.Load(),
+		DocsPublished: counters.Published.Load(),
+		HighWatermark: newHWM,
+	}, nil
+}
+
+func (i *Ingester) publishWork(ctx context.Context, w *openalexWork, raw []byte, c *ingestcommon.Counters) {
+	id := openalexShortID(w.ID)
+	if id == "" {
+		c.Failed.Add(1)
+		return
+	}
+	docID := "openalex:" + id
+
+	key, err := i.archiver.Put(ctx, "openalex", docID, raw)
+	if err != nil {
+		c.Failed.Add(1)
+		return
+	}
+	c.Archived.Add(1)
+
+	if _, err := i.pub.PublishRaw(ctx, "openalex", docID, key); err == nil {
+		c.Published.Add(1)
+	}
+
+	if i.citationsPub != nil {
+		for _, cited := range w.ReferencedWorks {
+			cidShort := openalexShortID(cited)
+			if cidShort == "" {
+				continue
+			}
+			edgeKey := fmt.Sprintf("edge:%s:%s", id, cidShort)
+			_, _ = i.citationsPub.PublishRaw(ctx, "openalex", edgeKey, "")
+		}
+	}
+}
+
+// openalexShortID strips the URL prefix to yield "W12345678".
+func openalexShortID(s string) string {
+	if s == "" {
+		return ""
+	}
+	idx := strings.LastIndex(s, "/")
+	if idx < 0 {
+		return s
+	}
+	return s[idx+1:]
+}
