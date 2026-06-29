@@ -265,3 +265,99 @@ func (s *Server) loadCSVReader(ctx context.Context, src io.Reader, label string)
 		return n, nil
 	}
 }
+
+func indexCols(header []string) map[string]int {
+	m := make(map[string]int, len(header))
+	for i, h := range header {
+		m[h] = i
+	}
+	return m
+}
+
+func safe(rec []string, col map[string]int, name string) string {
+	if i, ok := col[name]; ok && i < len(rec) {
+		return strings.TrimSpace(rec[i])
+	}
+	return ""
+}
+
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func rowToMap(header, rec []string) map[string]string {
+	m := make(map[string]string, len(header))
+	for i, h := range header {
+		if i < len(rec) {
+			m[h] = rec[i]
+		}
+	}
+	return m
+}
+
+// ---- /lookup endpoint ----
+
+type lookupResponse struct {
+	Author     string         `json:"author"`
+	Payments   []paymentMatch `json:"payments"`
+	Confidence float64        `json:"confidence"`
+}
+
+type paymentMatch struct {
+	SponsorName    string  `json:"sponsor_name"`
+	Year           int     `json:"year"`
+	AmountUSD      float64 `json:"amount_usd"`
+	PaymentType    string  `json:"payment_type"`
+	SourceRecordID string  `json:"source_record_id"`
+}
+
+func (s *Server) handleLookup(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
+		return
+	}
+	state := r.URL.Query().Get("state")
+	year := r.URL.Query().Get("year")
+
+	sql := `
+		SELECT physician_name, sponsor_name, payment_year, amount_usd,
+		       coalesce(payment_type,'other'), record_id,
+		       similarity(physician_name, $1) AS sim
+		FROM open_payments
+		WHERE physician_name % $1
+		  AND ($2 = '' OR physician_state = $2)
+		  AND ($3 = '' OR payment_year = $3::int)
+		  AND similarity(physician_name, $1) >= $4
+		ORDER BY sim DESC, amount_usd DESC
+		LIMIT 100`
+	rows, err := s.pool.Query(r.Context(), sql, name, state, year, s.cfg.MinFuzzyConfidence)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var resp lookupResponse
+	resp.Author = name
+	maxSim := 0.0
+	for rows.Next() {
+		var pm paymentMatch
+		var matchedName string
+		var sim float64
+		if err := rows.Scan(&matchedName, &pm.SponsorName, &pm.Year, &pm.AmountUSD, &pm.PaymentType, &pm.SourceRecordID, &sim); err != nil {
+			continue
+		}
+		if sim > maxSim {
+			maxSim = sim
+		}
+		resp.Payments = append(resp.Payments, pm)
+	}
+	resp.Confidence = maxSim
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
