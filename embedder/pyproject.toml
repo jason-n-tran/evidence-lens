@@ -1,0 +1,35 @@
+[project]
+name = "evidencelens-embedder"
+version = "0.1.0"
+description = "BGE-M3 gRPC/HTTP embedder for EvidenceLens (spec section 5.3)"
+requires-python = ">=3.12"
+# NOTE: vllm was removed — it was a multi-GB dependency that is NEVER imported by
+# this service (main.py uses sentence-transformers + torch only). It added ~40min
+# to image builds and bloated the image by gigabytes for zero functional gain.
+# The GPU build gets a CUDA torch wheel pinned in the Dockerfile (cu124).
+dependencies = [
+    "grpcio>=1.68.0",
+    "grpcio-tools>=1.68.0",
+    "grpcio-health-checking>=1.68.0",
+    "grpcio-reflection>=1.68.0",
+    "protobuf>=5.28.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sentence-transformers>=3.3.0",
+    "torch>=2.5.0",
+    "opentelemetry-sdk>=1.28.0",
+    "opentelemetry-instrumentation-grpc>=0.49b0",
+    "opentelemetry-exporter-otlp>=1.28.0",
+    "structlog>=24.4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3.0", "pytest-asyncio>=0.24.0", "ruff>=0.7.0", "mypy>=1.13.0"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
