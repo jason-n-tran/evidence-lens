@@ -203,3 +203,131 @@ class BatchedEmbedder:
                 count = len(p.texts)
                 p.future.set_result([v.tolist() for v in vectors[cursor:cursor + count]])
                 cursor += count
+
+
+
+# ---- gRPC servicer wired against the internal evidencelens package ----
+
+from evidencelens.v1 import (  # type: ignore[import]
+    EmbedRequest, EmbedResponse, EmbeddingVector,
+    EmbedderHealthzRequest, EmbedderHealthzResponse,
+)
+from evidencelens.v1.embedder_grpc import (  # type: ignore[import]
+    EmbedderServiceServicer,
+    add_EmbedderServiceServicer_to_server,
+)
+
+
+class EmbedderServicer(EmbedderServiceServicer):
+    def __init__(self, batcher: "BatchedEmbedder") -> None:
+        self.batcher = batcher
+
+    async def Embed(self, request_iterator, context):  # type: ignore[override]
+        async for req in request_iterator:
+            vecs = await self.batcher.embed(req.request_id, list(req.texts))
+            yield EmbedResponse(
+                request_id=req.request_id,
+                embeddings=[EmbeddingVector(values=v, dim=len(v)) for v in vecs],
+                embedding_model=self.batcher.state.name,
+            )
+
+    async def EmbedOnce(self, request, context):  # type: ignore[override]
+        vecs = await self.batcher.embed(request.request_id, list(request.texts))
+        return EmbedResponse(
+            request_id=request.request_id,
+            embeddings=[EmbeddingVector(values=v, dim=len(v)) for v in vecs],
+            embedding_model=self.batcher.state.name,
+        )
+
+    async def Healthz(self, request, context):  # type: ignore[override]
+        return EmbedderHealthzResponse(
+            status="degraded" if self.batcher.state.degraded else "ok",
+            embedding_model=self.batcher.state.name,
+            detail=self.batcher.state.detail,
+        )
+
+
+async def serve_grpc(engine: "EmbedEngine", state: ModelState) -> grpc.aio.Server:
+    server = grpc.aio.server(futures.ThreadPoolExecutor(max_workers=8))
+    global _GLOBAL_BATCHER
+    _GLOBAL_BATCHER = BatchedEmbedder(engine, state)
+    await _GLOBAL_BATCHER.start()
+    add_EmbedderServiceServicer_to_server(EmbedderServicer(_GLOBAL_BATCHER), server)
+
+    health_servicer = health.aio.HealthServicer()
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
+    await health_servicer.set("evidencelens.v1.EmbedderService",
+                                health_pb2.HealthCheckResponse.SERVING if not state.degraded
+                                else health_pb2.HealthCheckResponse.SERVING)
+
+    server.add_insecure_port(f"[::]:{GRPC_PORT}")
+    await server.start()
+    log.info("grpc serving", port=GRPC_PORT, model=state.name, dim=state.dim, degraded=state.degraded)
+    return server
+
+
+# ---- HTTP shim (healthz + /embed for clients without proto stubs) ----
+
+_GLOBAL_BATCHER: BatchedEmbedder | None = None
+
+
+def make_app(state: ModelState) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/healthz")
+    def healthz() -> dict:
+        return {
+            "status": "degraded" if state.degraded else "ok",
+            "model": state.name,
+            "dim": state.dim,
+            "detail": state.detail,
+        }
+
+    @app.post("/embed")
+    async def embed(body: dict) -> dict:
+        request_id = str(body.get("request_id", "anon"))
+        texts = list(body.get("texts", []))
+        if _GLOBAL_BATCHER is None:
+            return {"error": "batcher not ready"}
+        vectors = await _GLOBAL_BATCHER.embed(request_id, texts)
+        return {
+            "request_id": request_id,
+            "embeddings": [{"values": v, "dim": len(v)} for v in vectors],
+            "embedding_model": state.name,
+        }
+
+    return app
+
+
+# ---- Entry point ----
+
+async def main() -> None:
+    structlog.configure(
+        processors=[
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.JSONRenderer(),
+        ]
+    )
+    engine = EmbedEngine()
+    state = engine.start()  # blocks until the model is loaded on its thread
+    grpc_server = await serve_grpc(engine, state)
+
+    config = uvicorn.Config(make_app(state), host="0.0.0.0", port=HEALTH_PORT, log_level="info")
+    http_server = uvicorn.Server(config)
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+
+    try:
+        await asyncio.gather(http_server.serve(), stop.wait())
+    finally:
+        log.info("shutting down")
+        await grpc_server.stop(grace=10)
+        engine.stop()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
