@@ -1,0 +1,48 @@
+# CPU-only embedder for CPU hosts (e.g. TrueNAS homelab).
+#
+# The default Dockerfile uses an NVIDIA CUDA base + vLLM/torch (multi-GB) for
+# GPU throughput. main.py never imports vllm — it only uses sentence-transformers
+# (+ CPU torch), falling back to BGE-small (384-d) when no GPU is present. This
+# image installs ONLY that lightweight CPU path: a slim Python base and the CPU
+# torch wheel. Result: a much smaller, faster build with no CUDA toolchain.
+#
+# Build:  docker build -t evidencelens-embedder:local -f embedder/Dockerfile.cpu embedder
+# (tools/truenas-build.sh uses this automatically.)
+FROM python:3.12-slim AS base
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+ENV PIP_NO_CACHE_DIR=1
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
+# CPU-only dependency set (no vllm, CPU torch wheel). Kept separate from
+# pyproject.toml so the GPU image is unaffected.
+COPY pyproject.cpu.toml ./pyproject.toml
+RUN uv venv --python 3.12 /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+# Install the CPU torch wheel explicitly from the CPU index, then the rest.
+RUN uv pip install --index-strategy unsafe-best-match \
+        --extra-index-url https://download.pytorch.org/whl/cpu .
+
+COPY evidencelens ./evidencelens
+COPY . .
+
+# Pre-download the embedding model (BGE-M3, 1024-d — same as GPU) at build time
+# so the first request isn't slow and the container needs no outbound HF access
+# at runtime. Best-effort. BGE-M3 on CPU is slower than GPU but produces the
+# IDENTICAL 1024-d vectors, so it shares the Milvus collection correctly.
+ENV EMBEDDING_MODEL=BAAI/bge-m3
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-m3')" || \
+    echo "model prefetch skipped (will download on first run)"
+
+EXPOSE 50051 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -fsSL http://localhost:8080/healthz || exit 1
+
+ENTRYPOINT ["/opt/venv/bin/python", "main.py"]
