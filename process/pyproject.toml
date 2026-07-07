@@ -1,0 +1,53 @@
+[project]
+name = "evidencelens-processor"
+version = "0.1.0"
+description = "Parse + normalize + entity-link + chunk + embed + COI-join + publish (spec section 5.2)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "nats-py>=2.9.0",
+    "boto3>=1.35.0",
+    "asyncpg>=0.30.0",
+    "redis>=5.2.0",
+    "httpx>=0.28.0",
+    "lxml>=5.3.0",
+    "rapidfuzz>=3.10.0",
+    "tiktoken>=0.8.0",
+    "grpcio>=1.68.0",
+    "protobuf>=5.28.0",
+    "structlog>=24.4.0",
+    # Used by infra/scripts/enrich_citations.py (run as a scheduled job inside
+    # this container) to read the Neo4j citation graph and write scores to Meili.
+    "neo4j>=5.25.0",
+    "meilisearch>=0.31.0",
+    "opentelemetry-sdk>=1.28.0",
+    "opentelemetry-instrumentation-fastapi>=0.49b0",
+    "opentelemetry-instrumentation-asyncpg>=0.49b0",
+    "opentelemetry-instrumentation-grpc>=0.49b0",
+    "opentelemetry-exporter-otlp>=1.28.0",
+]
+
+# Heavy ML deps moved to extras so CI test installs stay under 1 GB.
+# Production NAS deploys install with `pip install .[ml]`.
+[project.optional-dependencies]
+ml = [
+    "spacy>=3.7.0,<3.9",
+    # 0.6.2 is the first scispaCy that supports Python 3.12 (updated scipy +
+    # nmslib-metabrainz fork). Older pins drag in scipy 1.10.1, which has no
+    # 3.12 wheel and fails to build. The en_core_sci_lg model release is still
+    # v0.5.4 (model versions don't track the library); it's installed in the
+    # Dockerfile, not here.
+    "scispacy==0.6.2",
+]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.7.0",
+    "mypy>=1.13.0",
+    "vcrpy>=6.0.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
