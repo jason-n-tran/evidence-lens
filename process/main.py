@@ -313,3 +313,13 @@ def _load_predatory_issns() -> set[str]:
         if line.strip() and not line.startswith("#")
     }
     return _PREDATORY_ISSNS
+
+
+def _is_predatory(issn: str) -> bool:
+    return _norm_issn(issn) in _load_predatory_issns()
+
+
+def _published_year(s: str | None) -> int | None:
+    if not s or len(s) < 4 or not s[:4].isdigit():
+        return None
+    return int(s[:4])
