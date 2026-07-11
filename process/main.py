@@ -323,3 +323,74 @@ def _published_year(s: str | None) -> int | None:
     if not s or len(s) < 4 or not s[:4].isdigit():
         return None
     return int(s[:4])
+
+
+_US_STATES = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA",
+    "colorado": "CO", "connecticut": "CT", "delaware": "DE", "florida": "FL", "georgia": "GA",
+    "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN", "iowa": "IA",
+    "kansas": "KS", "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+    "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV", "new hampshire": "NH",
+    "new jersey": "NJ", "new mexico": "NM", "new york": "NY", "north carolina": "NC",
+    "north dakota": "ND", "ohio": "OH", "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA",
+    "rhode island": "RI", "south carolina": "SC", "south dakota": "SD", "tennessee": "TN",
+    "texas": "TX", "utah": "UT", "vermont": "VT", "virginia": "VA", "washington": "WA",
+    "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+}
+
+
+def _extract_state(affiliation: str) -> str | None:
+    """Best-effort US state extraction from affiliation. Cheap heuristic."""
+    if not affiliation:
+        return None
+    lower = affiliation.lower()
+    for name, code in _US_STATES.items():
+        if name in lower:
+            return code
+        if f", {code.lower()}" in lower or f" {code.lower()} " in lower:
+            return code
+    return None
+
+
+# ---- HTTP healthz ----
+
+def make_app(pipeline: Pipeline) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/healthz")
+    async def healthz() -> dict:
+        ok = pipeline.nc is not None and pipeline.nc.is_connected
+        return {"status": "ok" if ok else "down", "nats": ok}
+
+    return app
+
+
+async def main() -> None:
+    structlog.configure(processors=[
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.JSONRenderer(),
+    ])
+    cfg = Config.from_env()
+    pipeline = Pipeline(cfg)
+    await pipeline.setup()
+
+    config = uvicorn.Config(make_app(pipeline), host="0.0.0.0", port=8080, log_level="info")
+    server = uvicorn.Server(config)
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+
+    try:
+        await asyncio.gather(server.serve(), stop.wait())
+    finally:
+        log.info("processor shutting down")
+        await pipeline.teardown()
+
+
+if __name__ == "__main__":
+    with suppress(KeyboardInterrupt):
+        asyncio.run(main())
