@@ -213,3 +213,34 @@ type Neo4jConfig struct {
 	Password string
 	Logger   *slog.Logger
 }
+
+// EnsureNeo4jIndexes creates the indexes from spec §3.4. Cypher CREATE
+// INDEX IF NOT EXISTS is idempotent.
+func EnsureNeo4jIndexes(ctx context.Context, cfg Neo4jConfig) error {
+	driver, err := neo4j.NewDriverWithContext(cfg.URL, neo4j.BasicAuth(cfg.User, cfg.Password, ""))
+	if err != nil {
+		return fmt.Errorf("neo4j driver: %w", err)
+	}
+	defer driver.Close(ctx)
+
+	stmts := []string{
+		"CREATE INDEX doc_id IF NOT EXISTS FOR (d:Document) ON (d.id)",
+		"CREATE INDEX author_orcid IF NOT EXISTS FOR (a:Author) ON (a.orcid)",
+		"CREATE INDEX author_key IF NOT EXISTS FOR (a:Author) ON (a.key)",
+		"CREATE INDEX mesh_name IF NOT EXISTS FOR (m:MeshTerm) ON (m.name)",
+		"CREATE INDEX sponsor_name IF NOT EXISTS FOR (s:Sponsor) ON (s.name)",
+		"CREATE INDEX journal_issn IF NOT EXISTS FOR (j:Journal) ON (j.issn)",
+	}
+	ses := driver.NewSession(ctx, neo4j.SessionConfig{})
+	defer ses.Close(ctx)
+	for _, s := range stmts {
+		_, err := ses.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+			return tx.Run(ctx, s, nil)
+		})
+		if err != nil {
+			cfg.Logger.Warn("neo4j index create", "stmt", s, "err", err)
+		}
+	}
+	cfg.Logger.Info("neo4j indexes ensured", "n", len(stmts))
+	return nil
+}
