@@ -1,0 +1,287 @@
+# EvidenceLens public GraphQL schema.
+#
+# Served by the query-gateway (NestJS + Apollo Server v4) at /graphql.
+# Introspection is enabled in production; this schema is the public contract.
+#
+# Spec source of truth: docs/EVIDENCELENS_SPEC.md sections 5.6 and 6.
+# Any change requires an `rfc-interface` PR per docs/rfcs/README.md.
+
+scalar DateTime
+scalar JSON
+
+# ---- Root ----
+
+type Query {
+  """
+  Search the corpus. Returns the final wave (post-LTR rerank) synchronously.
+  For streamed waves, use `searchStream` Subscription or the WebSocket
+  `/ws` event `search` (see docs/api/websocket.md).
+  """
+  search(
+    query: String!
+    filters: SearchFiltersInput
+    topK: Int = 50
+    variant: String
+    sessionId: String
+  ): SearchResult!
+
+  """
+  Fetch one document by id. Used by the result drawer.
+  """
+  document(id: ID!): Document
+
+  """
+  Fetch one trial by NCT id or ICTRP id. Convenience over `document` when
+  the caller knows it's a trial registry record.
+  """
+  trial(id: ID!): Trial
+
+  """
+  Filtered trial search. Distinct from `search` because it skips text
+  ranking and applies registry-native filters.
+  """
+  trials(
+    condition: String
+    location: String
+    status: String
+    phase: String
+    topK: Int = 50
+  ): [Document!]!
+
+  """
+  Recent FDA / EMA / etc. recall events, newest first. Used by the
+  RecallTicker on the frontend home page.
+  """
+  recentRecalls(
+    sinceDays: Int = 30
+    drugClass: String
+    productName: String
+    topK: Int = 20
+  ): [RecallEvent!]!
+
+  """
+  List supported BYOK LLM providers and their endpoint shapes. Used by
+  the frontend's TierPicker.
+  """
+  supportedLlmProviders: [LlmProvider!]!
+}
+
+type Subscription {
+  """
+  Streamed search. The server emits multiple `SearchResultWave` messages
+  for one query (first 5 results @ 200ms, next 10 @ 500ms, final 35 @
+  1000ms). Mirror of the WebSocket `search.partial` / `search.final`
+  events; offered here for clients that prefer GraphQL transport.
+  """
+  searchStream(
+    query: String!
+    filters: SearchFiltersInput
+    topK: Int = 50
+    variant: String
+    sessionId: String
+  ): SearchResultWave!
+
+  """
+  Live FDA / EMA recall fanout. Subscribers receive one `RecallEvent` per
+  newly-published recall; SLO ≤ 1 minute end-to-end (spec §14.1).
+  """
+  recallFanout(
+    drugClass: String
+    productName: String
+  ): RecallEvent!
+}
+
+# ---- Search ----
+
+type SearchResult {
+  query: String!
+  results: [ScoredResult!]!
+  totalEstimated: Int!
+  variant: String
+  elapsedMs: Int!
+}
+
+type SearchResultWave {
+  query: String!
+  wave: Int!
+  isFinal: Boolean!
+  results: [ScoredResult!]!
+  elapsedMs: Int!
+}
+
+type ScoredResult {
+  document: Document!
+  finalScore: Float!
+  breakdown: ScoreBreakdown!
+}
+
+type ScoreBreakdown {
+  bm25: Float!
+  vector: Float!
+  citationPagerank: Float!
+  recency: Float!
+  rrf: Float!
+  ltr: Float!
+  ltrModelVersion: String!
+}
+
+input SearchFiltersInput {
+  studyTypes: [StudyType!]
+  publishedYearMin: Int
+  publishedYearMax: Int
+  meshTerms: [String!]
+  sources: [String!]
+  licenses: [String!]
+  onlyWithCoi: Boolean = false
+  onlyWithFullText: Boolean = false
+  excludePredatoryJournals: Boolean = false
+}
+
+# ---- Document ----
+
+type Document {
+  id: ID!
+  source: String!
+  sourceNativeId: String!
+  doi: String
+  pmid: String
+  pmcid: String
+  nctId: String
+  ictrpId: String
+  title: String!
+  abstract: String!
+  fullText: String
+  canonicalUrl: String!
+  ingestedAt: DateTime!
+  sourceUpdatedAt: DateTime
+  publishedAt: DateTime
+  license: String!
+  authors: [Author!]!
+  studyType: StudyType!
+  meshTerms: [String!]!
+  keywords: [String!]!
+  journal: Journal
+  trial: Trial
+  regulatory: Regulatory
+  citationCount: Int!
+  citationPagerank: Float!
+  funding: [FundingSource!]!
+  hasCoiAuthors: Boolean!
+  maxAuthorPaymentUsd: Float
+  embeddingModel: String
+}
+
+# ---- Author + COI ----
+
+type Author {
+  displayName: String!
+  givenName: String
+  familyName: String
+  orcid: String
+  affiliation: String
+  payments: [AuthorPayment!]!
+  badge: AuthorBadge!
+}
+
+"""
+Pre-computed UI-facing summary of an author's COI status. Surfaced by
+`COIBadge` on the frontend without forcing the client to iterate
+`payments`.
+"""
+type AuthorBadge {
+  hasPayments: Boolean!
+  totalPaymentsUsd: Float!
+  topSponsor: String
+  topSponsorAmountUsd: Float
+  paymentsLastYear: Int!
+  yearsCovered: [String!]!
+}
+
+type AuthorPayment {
+  sponsorName: String!
+  year: String!
+  amountUsd: Float!
+  paymentType: String!
+  sourceRecordId: String!
+}
+
+# ---- Subsidiary types ----
+
+type Journal {
+  name: String!
+  issn: String
+  publisher: String
+  impactFactor: Float
+  isPredatory: Boolean!
+}
+
+enum StudyType {
+  RCT
+  META_ANALYSIS
+  SYSTEMATIC_REVIEW
+  OBSERVATIONAL
+  CASE_REPORT
+  PREPRINT
+  TRIAL_REGISTRY
+  REGULATORY
+  GUIDELINE
+  REVIEW
+  EDITORIAL
+  OTHER
+}
+
+type Trial {
+  registry: String!
+  status: String!
+  phase: String!
+  conditions: [String!]!
+  interventions: [String!]!
+  locations: [String!]!
+  enrollment: Int
+  startDate: DateTime
+  completionDate: DateTime
+  primaryOutcome: String
+}
+
+type Regulatory {
+  agency: String!
+  eventType: String!
+  productName: String!
+  drugClass: String
+  recallClass: String
+  reason: String
+  action: String
+}
+
+type FundingSource {
+  funder: String!
+  grantId: String
+  amountUsd: Float
+  fiscalYear: String
+}
+
+type RecallEvent {
+  recallId: ID!
+  agency: String!
+  productName: String!
+  drugClass: String
+  recallClass: String!
+  emittedAt: DateTime!
+}
+
+# ---- BYOK provider catalog ----
+
+"""
+Describes one BYOK provider supported by the agent-service. Frontends use
+this to render the TierPicker with provider-specific instructions and to
+validate user input shape.
+"""
+type LlmProvider {
+  id: String!                # "anthropic" | "openai" | "groq" | "openrouter" | "together" | "deepinfra" | "ollama"
+  displayName: String!
+  apiShape: String!          # "anthropic" | "openai_compatible" | "ollama"
+  supportsPromptCaching: Boolean!
+  defaultModel: String!
+  models: [String!]!
+  setupUrl: String           # link to provider's API key creation page
+}
