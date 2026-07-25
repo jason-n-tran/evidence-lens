@@ -93,3 +93,97 @@ function makeServer(sessionId: string): Server {
 
   return server;
 }
+
+async function runStdio(): Promise<void> {
+  const transport = new StdioServerTransport();
+  // stdio sessions get a stable per-process sessionId for rate limiting.
+  const server = makeServer(`stdio-${process.pid}`);
+  await server.connect(transport);
+  console.error("[mcp] stdio transport ready");
+}
+
+async function runHttp(port: number): Promise<void> {
+  const app = express();
+  const transports = new Map<string, SSEServerTransport>();
+
+  app.get("/.well-known/mcp.json", (_req, res) => {
+    res.json({
+      schema_version: "2025-06",
+      name: "evidencelens",
+      description: "Free, public, agentic biomedical evidence search",
+      // Advertise the modern transport first; keep the legacy SSE entry for
+      // older clients that still look for it.
+      transport: {
+        type: "streamable-http",
+        endpoint: "/mcp",
+      },
+      transports: [
+        { type: "streamable-http", endpoint: "/mcp" },
+        { type: "http+sse", endpoint: "/sse" },
+      ],
+    });
+  });
+
+  // --- Modern transport: Streamable HTTP at a single /mcp endpoint ---
+  // Stateless: every request gets a fresh Server + transport (no session
+  // affinity). This server only dispatches stateless tool/resource calls, so
+  // there's no per-session state to keep — and statelessness makes it trivial
+  // to sit behind the gateway proxy and to scale horizontally.
+  async function handleStreamable(req: express.Request, res: express.Response): Promise<void> {
+    // A per-request id for rate limiting (no MCP session id in stateless mode).
+    const rlId = `http-${(req.headers["x-forwarded-for"] as string) ?? req.ip ?? randomUUID()}`;
+    const server = makeServer(rlId);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on("close", () => { transport.close(); server.close(); });
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } catch (err) {
+      console.error("[mcp] streamable request error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: "2.0",
+          error: { code: -32603, message: "internal error" },
+          id: null,
+        });
+      }
+    }
+  }
+
+  app.post("/mcp", express.json(), handleStreamable);
+  // GET /mcp is used by clients that open a server->client notification stream.
+  // Stateless mode has nothing to stream, but handleRequest replies correctly
+  // (405 Method Not Allowed) rather than leaving the client hanging.
+  app.get("/mcp", handleStreamable);
+
+  app.get("/sse", async (req, res) => {
+    const transport = new SSEServerTransport("/messages", res);
+    transports.set(transport.sessionId, transport);
+    res.on("close", () => {
+      transports.delete(transport.sessionId);
+      rateLimit.reset(transport.sessionId);
+    });
+    const server = makeServer(transport.sessionId);
+    await server.connect(transport);
+  });
+
+  app.post("/messages", express.json(), async (req, res) => {
+    const sessionId = String(req.query.sessionId ?? "");
+    const transport = transports.get(sessionId);
+    if (!transport) { res.status(404).end(); return; }
+    await transport.handlePostMessage(req, res);
+  });
+
+  app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
+
+  app.listen(port, () => console.log(`[mcp] http+sse listening on :${port}`));
+}
+
+const transport = process.env.MCP_TRANSPORT ?? "stdio";
+if (transport === "http") {
+  runHttp(parseInt(process.env.MCP_PORT ?? "8082", 10)).catch(err => {
+    console.error("[mcp] fatal", err); process.exit(1);
+  });
+} else {
+  runStdio().catch(err => { console.error("[mcp] fatal", err); process.exit(1); });
+}
