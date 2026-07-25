@@ -1,0 +1,46 @@
+{
+  "name": "evidencelens-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:a11y": "playwright test tests/a11y",
+    "test:e2e": "playwright test tests/e2e",
+    "lighthouse": "lhci autorun"
+  },
+  "dependencies": {
+    "@apollo/client": "^3.12.0",
+    "@mlc-ai/web-llm": "^0.2.78",
+    "@sentry/nextjs": "^8.45.0",
+    "@tanstack/react-query": "^5.62.0",
+    "axe-core": "^4.10.0",
+    "d3": "^7.9.0",
+    "graphql": "^16.10.0",
+    "next": "^15.1.0",
+    "pino": "^9.5.0",
+    "posthog-js": "^1.200.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "@lhci/cli": "^0.14.0",
+    "@playwright/test": "^1.49.0",
+    "@tailwindcss/postcss": "^4.3.0",
+    "@types/d3": "^7.4.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "^15.1.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

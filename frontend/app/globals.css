@@ -1,0 +1,335 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   EvidenceLens — "diagnostic instrument" design system
+   Paper-white precision UI · specimen-amber signature · monospace readouts.
+   Two concentrated risks: the lens-reticle hero and the COI exposure gauge.
+   ============================================================================ */
+
+:root {
+  /* substrate */
+  --paper:        200 24% 98%;
+  --panel:        0 0% 100%;
+  --panel-2:      200 24% 96%;
+  --ink:          198 32% 13%;
+  --muted:        200 14% 38%;
+  --rule:         200 18% 88%;
+  --rule-strong:  200 16% 79%;
+
+  /* signature amber — readable ochre for text, luminous for instruments */
+  --accent:        30 84% 33%;
+  --accent-bright: 38 96% 52%;
+
+  /* COI signal — readable vermilion for text, hot for the gauge */
+  --coi:        6 72% 44%;
+  --coi-bright: 10 84% 55%;
+
+  /* verified / quality / recall-class */
+  --verified: 176 60% 28%;
+  --rcr:      176 60% 28%;
+
+  /* legacy aliases consumed across components */
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --primary:    var(--ink);
+  --border:     var(--rule);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper:        200 30% 8%;
+    --panel:        200 28% 11%;
+    --panel-2:      200 24% 14%;
+    --ink:          190 16% 92%;
+    --muted:        200 12% 62%;
+    --rule:         200 18% 20%;
+    --rule-strong:  200 16% 30%;
+
+    --accent:        38 90% 62%;
+    --accent-bright: 40 96% 60%;
+
+    --coi:        8 82% 66%;
+    --coi-bright: 10 86% 60%;
+
+    --verified: 174 52% 54%;
+    --rcr:      174 52% 54%;
+  }
+}
+
+@theme inline {
+  --font-sans:  var(--font-grotesk), ui-sans-serif, system-ui, sans-serif;
+  --font-serif: var(--font-source), Georgia, "Times New Roman", serif;
+  --font-mono:  var(--font-plex), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ---- base -------------------------------------------------------------- */
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: hsl(var(--paper));
+  color: hsl(var(--ink));
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv01";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: hsl(var(--accent-bright) / 0.28); }
+
+:focus-visible {
+  outline: 2px solid hsl(var(--accent));
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+h1, h2, h3, h4 { font-family: var(--font-sans); letter-spacing: -0.012em; }
+
+a { color: hsl(var(--accent)); text-underline-offset: 2px; }
+
+/* tabular numerics everywhere a number is rendered inline */
+.data, .font-mono, time, [data-num] {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum", "zero";
+}
+
+/* ---- evidence prose (abstracts, synthesis, about/docs) ----------------- */
+
+.evidence,
+.prose p { font-family: var(--font-serif); line-height: 1.7; }
+
+.prose { max-width: 68ch; }
+.prose h1 { font-family: var(--font-sans); font-size: 1.9rem; font-weight: 600; margin: 0 0 0.5em; letter-spacing: -0.012em; }
+.prose h2 { font-family: var(--font-sans); font-size: 1.3rem; font-weight: 600; margin: 1.6em 0 0.4em; letter-spacing: -0.01em; }
+.prose h3 { font-family: var(--font-sans); font-size: 1.05rem; font-weight: 600; margin: 1.3em 0 0.3em; }
+.prose p  { margin: 0 0 1em; color: hsl(var(--ink)); }
+.prose a  { text-decoration: underline; }
+.prose strong { font-weight: 700; }
+
+/* lists */
+.prose ul, .prose ol { margin: 0 0 1em; padding-left: 1.4em; }
+.prose li { font-family: var(--font-serif); line-height: 1.7; margin: 0.3em 0; }
+.prose ul > li { list-style: none; position: relative; }
+.prose ul > li::before {
+  content: "";
+  position: absolute;
+  left: -1em;
+  top: 0.72em;
+  width: 4px; height: 4px;
+  border-radius: 999px;
+  background: hsl(var(--accent-bright));
+}
+.prose ol > li { list-style: decimal; }
+.prose ol > li::marker { font-family: var(--font-mono); font-size: 0.85em; color: hsl(var(--muted)); }
+
+/* inline code + code blocks */
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  background: hsl(var(--panel-2));
+  border: 1px solid hsl(var(--rule));
+  border-radius: 3px;
+  padding: 0.08em 0.34em;
+  color: hsl(var(--accent));
+  word-break: break-word;
+}
+.prose pre {
+  font-family: var(--font-mono);
+  background: hsl(var(--ink));
+  color: hsl(var(--paper));
+  border: 1px solid hsl(var(--rule-strong));
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  margin: 0 0 1.2em;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+.prose pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  word-break: normal;
+}
+
+/* ---- instrument primitives -------------------------------------------- */
+
+/* hairline divider doubling as a measurement tick scale */
+.tick-rule {
+  height: 1px;
+  background-image: repeating-linear-gradient(
+    90deg,
+    hsl(var(--rule)) 0 6px,
+    transparent 6px 7px
+  );
+}
+
+/* eyebrow / spec label */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+}
+
+/* typed taxonomy tag (study type, agency, class) */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.4rem;
+  border: 1px solid hsl(var(--rule-strong));
+  border-radius: 3px;
+  color: hsl(var(--muted));
+  white-space: nowrap;
+}
+.tag-strong { color: hsl(var(--ink)); border-color: hsl(var(--accent) / 0.55); }
+
+/* instrument panel / card */
+.panel {
+  background: hsl(var(--panel));
+  border: 1px solid hsl(var(--rule));
+  border-radius: 6px;
+}
+.panel-quiet { background: transparent; border: 1px solid hsl(var(--rule)); border-radius: 6px; }
+
+/* a result card: left focal spine that lights up on hover/focus */
+.specimen {
+  position: relative;
+  background: hsl(var(--panel));
+  border: 1px solid hsl(var(--rule));
+  border-left: 2px solid hsl(var(--rule-strong));
+  border-radius: 6px;
+  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+.specimen:hover,
+.specimen:focus-within {
+  border-left-color: hsl(var(--accent-bright));
+  box-shadow: -2px 0 0 hsl(var(--accent-bright) / 0.15);
+}
+.specimen[aria-current="true"] {
+  border-color: hsl(var(--accent));
+  border-left-color: hsl(var(--accent-bright));
+}
+
+/* ---- buttons / fields -------------------------------------------------- */
+
+.btn {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  border-radius: 5px;
+  border: 1px solid hsl(var(--rule-strong));
+  background: hsl(var(--panel));
+  color: hsl(var(--ink));
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.btn:hover { border-color: hsl(var(--accent) / 0.6); }
+
+.btn-accent {
+  background: hsl(var(--accent));
+  border-color: hsl(var(--accent));
+  color: #fff;
+}
+.btn-accent:hover { background: hsl(var(--accent) / 0.9); border-color: hsl(var(--accent) / 0.9); }
+
+/* ---- signature 1: the lens reticle (hero search aperture) -------------- */
+
+.reticle {
+  position: relative;
+  background: hsl(var(--panel));
+  border: 1px solid hsl(var(--rule-strong));
+  border-radius: 8px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.reticle:focus-within {
+  border-color: hsl(var(--accent) / 0.5);
+  box-shadow: 0 0 0 4px hsl(var(--accent-bright) / 0.1);
+}
+
+/* four corner brackets that tighten inward on focus */
+.reticle-corner {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 0 solid hsl(var(--accent-bright));
+  transition: inset 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.22s ease;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.reticle:focus-within .reticle-corner { opacity: 1; }
+
+.reticle-corner.tl { top: -1px; left: -1px;  border-top-width: 2px; border-left-width: 2px;  border-top-left-radius: 8px; }
+.reticle-corner.tr { top: -1px; right: -1px; border-top-width: 2px; border-right-width: 2px; border-top-right-radius: 8px; }
+.reticle-corner.bl { bottom: -1px; left: -1px;  border-bottom-width: 2px; border-left-width: 2px;  border-bottom-left-radius: 8px; }
+.reticle-corner.br { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; border-bottom-right-radius: 8px; }
+
+.reticle:focus-within .reticle-corner.tl { top: 5px; left: 5px; }
+.reticle:focus-within .reticle-corner.tr { top: 5px; right: 5px; }
+.reticle:focus-within .reticle-corner.bl { bottom: 5px; left: 5px; }
+.reticle:focus-within .reticle-corner.br { bottom: 5px; right: 5px; }
+
+/* ---- signature 2: the COI exposure gauge ------------------------------ */
+
+.gauge {
+  display: inline-block;
+  width: 56px;
+  height: 5px;
+  border-radius: 999px;
+  background: hsl(var(--rule-strong));
+  overflow: hidden;
+  vertical-align: middle;
+}
+.gauge > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, hsl(var(--accent-bright)), hsl(var(--coi-bright)));
+  transition: width 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.coi-readout {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: hsl(var(--coi));
+  letter-spacing: 0.01em;
+}
+
+/* status / disclaimer bar */
+.status-bar {
+  background: hsl(var(--ink));
+  color: hsl(var(--paper));
+  border-bottom: 1px solid hsl(var(--accent-bright) / 0.35);
+}
+.status-bar strong { color: hsl(var(--accent-bright)); font-weight: 600; }
+
+/* skip-nav */
+.skip-nav { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+.skip-nav:focus {
+  left: 1rem; top: 1rem; width: auto; height: auto;
+  padding: 0.5rem 1rem; background: hsl(var(--panel));
+  border: 2px solid hsl(var(--accent)); z-index: 9999; border-radius: 4px;
+}
+
+/* hero focal pulse — subtle, ambient */
+@keyframes focal {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50%      { opacity: 0.85; transform: scale(1.08); }
+}
+.focal-dot { animation: focal 3.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
