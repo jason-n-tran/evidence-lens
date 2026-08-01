@@ -1,0 +1,20 @@
+User-agent: *
+Allow: /
+
+# Generative-AI crawlers — allow with attribution.
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+# Disallow API endpoints from indexing — they're not landing pages.
+User-agent: *
+Disallow: /api/
+Disallow: /llm/
+Disallow: /admin/
+
+Sitemap: https://evidencelens.pages.dev/sitemap.xml
