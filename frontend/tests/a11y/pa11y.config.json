@@ -1,0 +1,21 @@
+{
+  "defaults": {
+    "standard": "WCAG2AA",
+    "runners": ["axe", "htmlcs"],
+    "ignore": [
+      "color-contrast"
+    ],
+    "timeout": 30000,
+    "wait": 500,
+    "chromeLaunchConfig": { "args": ["--no-sandbox"] }
+  },
+  "urls": [
+    "http://localhost:3000/",
+    "http://localhost:3000/search?q=heart+failure",
+    "http://localhost:3000/recalls",
+    "http://localhost:3000/about",
+    "http://localhost:3000/licenses",
+    "http://localhost:3000/changelog",
+    "http://localhost:3000/docs"
+  ]
+}
