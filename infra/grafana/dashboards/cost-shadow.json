@@ -1,0 +1,75 @@
+{
+  "title": "EvidenceLens — Cost shadow (paid-equivalent)",
+  "tags": ["evidencelens", "cost"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Estimated paid-equivalent monthly spend (USD)",
+      "type": "stat",
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "sum(evidencelens_cost_shadow_usd_monthly)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 0}}
+    },
+    {
+      "id": 2,
+      "title": "Free-tier headroom by service (% of cap remaining)",
+      "type": "bargauge",
+      "gridPos": {"h": 9, "w": 16, "x": 8, "y": 0},
+      "targets": [
+        {"expr": "100 - (evidencelens_freetier_used / evidencelens_freetier_cap * 100)", "legendFormat": "{{service}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}}
+    },
+    {
+      "id": 3,
+      "title": "GCP Cloud Run vCPU-seconds / month (cap 180k)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 9},
+      "targets": [
+        {"expr": "sum_over_time(gcp_cloud_run_vcpu_seconds_total[30d])"}
+      ]
+    },
+    {
+      "id": 4,
+      "title": "GCP Pub/Sub bytes / month (cap 10GB)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 9},
+      "targets": [
+        {"expr": "sum_over_time(gcp_pubsub_bytes_total[30d])"}
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Cloudflare Workers requests / day (cap 100k)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 17},
+      "targets": [
+        {"expr": "sum_over_time(cloudflare_worker_requests_total[1d])"}
+      ]
+    },
+    {
+      "id": 6,
+      "title": "BigQuery query bytes / month (cap 1TB)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 17},
+      "targets": [
+        {"expr": "sum_over_time(bigquery_query_bytes_total[30d])"}
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Grafana Cloud series count (cap 10k)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 25},
+      "targets": [
+        {"expr": "grafanacloud_instance_active_series"}
+      ]
+    }
+  ]
+}

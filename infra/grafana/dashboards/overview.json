@@ -1,0 +1,56 @@
+{
+  "title": "EvidenceLens — Overview",
+  "tags": ["evidencelens", "overview"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Search QPS",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "sum(rate(http_server_request_duration_seconds_count{service=\"gateway\",route=~\"/api/search.*\"}[1m]))"}
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Search latency p95",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{service=\"gateway\",route=~\"/api/search.*\"}[5m])) by (le))"}
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Indexer lag (event → searchable)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [{"expr": "indexer_lag_seconds"}]
+    },
+    {
+      "id": 4,
+      "title": "Indexer DLQ rate",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [{"expr": "rate(indexer_dlq_total[5m])"}]
+    },
+    {
+      "id": 5,
+      "title": "Recall fanout E2E",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [{"expr": "histogram_quantile(0.95, sum(rate(recall_fanout_seconds_bucket[5m])) by (le))"}]
+    },
+    {
+      "id": 6,
+      "title": "BYOK proxy TTFB",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [{"expr": "histogram_quantile(0.95, sum(rate(byok_proxy_ttfb_seconds_bucket[5m])) by (le))"}]
+    }
+  ]
+}

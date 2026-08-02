@@ -1,0 +1,221 @@
+; ofelia schedule registry — replaces the old Dokploy schedules and the
+; 7 GitHub-Actions scheduled-*.yml workflows.
+;
+; ofelia mounts the Docker socket and triggers other containers on cron.
+; Two block types here:
+;   [job-run "..."]   — start a fresh container on schedule (one-shot ingesters)
+;   [job-exec "..."]  — exec a command inside an already-running container
+;
+; All times are server-local. Schedules use 6-field cron (sec min hr dom mon dow).
+;
+; This file is a TEMPLATE. ofelia does not interpolate ${VAR} itself and
+; job-run containers do not inherit ofelia's own env, so the entrypoint
+; renders it with envsubst at startup (see entrypoint.sh) into the actual
+; config ofelia reads. The `environment = KEY=${KEY}` lines below are what
+; pass real values into each spawned ingester container.
+;
+; The ingester images must be built before their schedules can fire. Build with:
+;   npm run up:ingest
+; (or `docker compose --profile ingest build`)
+
+; ===================================================================
+; Ingesters — wired up in docker-compose.yml today (13 of 27)
+; (CORE + Unpaywall have compose services but no cron here: CORE needs a free
+; CORE_API_KEY, Unpaywall is per-DOI enrichment. Run them via npm when ready.)
+; ===================================================================
+
+; Ingesters read Postgres via DATABASE_URL only (not the individual
+; POSTGRES_* vars), so those are deliberately omitted here. Keeping
+; POSTGRES_PASSWORD/USER/DB out of the rendered set also leaves the
+; clicks-rollup command's `$$POSTGRES_*` escapes untouched by envsubst.
+
+[job-run "ingester-pubmed"]
+schedule = 0 0 */6 * * *
+image = evidencelens-ingester-pubmed:local
+network = evidencelens_evidencelens
+environment = NCBI_API_KEY=${NCBI_API_KEY}
+environment = NCBI_TOOL=${NCBI_TOOL}
+environment = NCBI_EMAIL=${NCBI_EMAIL}
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+[job-run "ingester-fda"]
+schedule = 0 */30 * * * *
+image = evidencelens-ingester-fda:local
+network = evidencelens_evidencelens
+environment = OPENFDA_API_KEY=${OPENFDA_API_KEY}
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+[job-run "ingester-preprint"]
+schedule = 0 0 */12 * * *
+image = evidencelens-ingester-preprint:local
+network = evidencelens_evidencelens
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+[job-run "ingester-trials"]
+schedule = 0 0 2 * * *
+image = evidencelens-ingester-trials:local
+network = evidencelens_evidencelens
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+[job-run "ingester-openalex"]
+schedule = 0 0 4 * * 0
+image = evidencelens-ingester-openalex:local
+network = evidencelens_evidencelens
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+; Crossref drains its enrich queue in batch mode (DOIs the processor flagged as
+; missing journal/publisher metadata). Hourly.
+[job-run "ingester-crossref"]
+schedule = 0 17 * * * *
+image = evidencelens-ingester-crossref:local
+network = evidencelens_evidencelens
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+[job-run "ingester-nih-reporter"]
+schedule = 0 23 3 * * 1
+image = evidencelens-ingester-nih-reporter:local
+network = evidencelens_evidencelens
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+[job-run "ingester-chembl"]
+schedule = 0 41 4 * * 2
+image = evidencelens-ingester-chembl:local
+network = evidencelens_evidencelens
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+[job-run "ingester-europepmc"]
+schedule = 0 13 5 * * *
+image = evidencelens-ingester-europepmc:local
+network = evidencelens_evidencelens
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+[job-run "ingester-nsf"]
+schedule = 0 29 6 * * 3
+image = evidencelens-ingester-nsf:local
+network = evidencelens_evidencelens
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+[job-run "ingester-hpo"]
+schedule = 0 47 4 1 * *
+image = evidencelens-ingester-hpo:local
+network = evidencelens_evidencelens
+environment = NATS_URL=${NATS_URL}
+environment = DATABASE_URL=${DATABASE_URL}
+environment = S3_ENDPOINT=${S3_ENDPOINT}
+environment = S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+environment = S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+environment = S3_BUCKET=${S3_BUCKET}
+
+; ===================================================================
+; In-cluster scheduled jobs that exec inside existing containers.
+; Container names follow docker-compose's default: <project>-<service>-1.
+; Project name is "evidencelens" (set at the top of docker-compose.yml).
+; ===================================================================
+
+; Weekly citation enrichment: compute inbound citation_count + PageRank from the
+; Neo4j CITES graph and write them back to Neo4j + Meilisearch so "most cited" /
+; "most influential" sorts work. The script computes PageRank too, so this
+; replaces the old (dead) `/indexer pagerank-once` job. Runs inside the processor
+; container, which has neo4j+meilisearch libs and NEO4J_*/MEILI_* env.
+[job-exec "enrich-citations"]
+schedule = 0 0 17 * * 0
+container = evidencelens-processor-1
+command = python /app/infra/scripts/enrich_citations.py
+
+; Annual CMS Open Payments bulk load -> populates the open_payments table that
+; drives every COIBadge. Triggers the long-running open-payments service's
+; /run?url= endpoint (it streams the ZIP, extracts the General-Payment CSV, and
+; COPY-loads Postgres). No-op if OPENPAYMENTS_BULK_URL is unset, so it's safe to
+; leave scheduled. CMS publishes the prior program year by ~June 30 annually;
+; run yearly in July. The container has wget (used by its own healthcheck).
+[job-exec "open-payments-bulk"]
+schedule = 0 0 6 5 7 *
+container = evidencelens-ingester-open-payments-1
+command = sh -c "test -n \"$$OPENPAYMENTS_BULK_URL\" && wget -qO- --post-data='' \"http://127.0.0.1:8080/run?url=$$OPENPAYMENTS_BULK_URL\" || echo 'OPENPAYMENTS_BULK_URL unset; skipping'"
+
+; Weekly LTR retrain (clicks → XGBoost shadow deploy). Mondays 04:00.
+[job-exec "ltr-train"]
+schedule = 0 0 4 * * 1
+container = evidencelens-scorer-1
+command = python scripts/train_ltr.py --shadow
+
+; Nightly clicks rollup.
+[job-exec "clicks-rollup"]
+schedule = 0 0 4 * * *
+container = evidencelens-postgres-1
+command = sh -c "PGPASSWORD=$$POSTGRES_PASSWORD psql -U $$POSTGRES_USER -d $$POSTGRES_DB -c 'INSERT INTO clicks_daily SELECT date_trunc(''day'', client_ts) AS day, query_text, count(*) FROM clicks WHERE client_ts >= now() - interval ''2 days'' GROUP BY day, query_text ON CONFLICT DO NOTHING;'"
+
+; ===================================================================
+; Disabled by default. nDCG eval + k6 load test + pa11y + interleaving
+; require their own one-shot images that aren't in the compose today.
+; Activate by adding new compose services and uncommenting here.
+; ===================================================================
+;
+; [job-run "eval-ndcg"]
+; schedule = 0 0 23 7 * *  *
+; image = evidencelens-eval:local
+; network = evidencelens_evidencelens
+;
+; [job-run "load-test"]
+; schedule = 0 0 29 2 * *  *
+; image = grafana/k6:latest
+; network = evidencelens_evidencelens
+; command = run --vus 5 --duration 5m --env GATEWAY_URL=http://gateway:8080 /scripts/search.js
+
+; ===================================================================
+; Additional ingesters — keep here as commented templates so that
+; activating them later is mechanical. Wire each into docker-compose.yml
+; (under profiles: ["ingest"]) before uncommenting the schedule.
+; ===================================================================
+;
+; ... (21 more — see docs/ingester-cadences.md for the full set)
