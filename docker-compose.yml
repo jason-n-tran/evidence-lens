@@ -1,0 +1,265 @@
+# EvidenceLens — application services.
+#
+# Apps only. The data plane (postgres / nats / redis / meili / milvus / neo4j)
+# lives in docker-compose.data.yml so production can swap it for an external
+# host (e.g. TrueNAS) by simply omitting that file.
+#
+# Usage:
+#   npm run up                         # default: app stack + data plane (data file pulled in via npm script)
+#   npm run up:full                    # default + ingest + observability profiles
+#   npm run up:prod                    # apps only + prod overlay (external data plane)
+#   docker compose --profile ingest run --rm ingester-pubmed
+#   docker compose --profile test run --rm smoke
+#
+# All optional dependencies (Turnstile, OTel, Sentry, PostHog) degrade
+# to no-op when their env vars are blank. See .env.example.
+
+name: evidencelens
+
+networks:
+  evidencelens:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  ofelia_config:
+
+# ---------------------------------------------------------------------
+# YAML anchors for shared config
+# ---------------------------------------------------------------------
+x-app-env: &app-env
+  POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  POSTGRES_DB:   ${POSTGRES_DB:-evidencelens}
+  POSTGRES_USER: ${POSTGRES_USER:-evidencelens}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme-dev-only}
+  DATABASE_URL: postgres://${POSTGRES_USER:-evidencelens}:${POSTGRES_PASSWORD:-changeme-dev-only}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-evidencelens}
+  NATS_URL:     ${NATS_URL:-nats://nats:4222}
+  NATS_STREAM:  ${NATS_STREAM:-EVIDENCELENS}
+  NATS_SUBJECT_RAW_DOCS: ${NATS_SUBJECT_RAW_DOCS:-raw-docs}
+  NATS_SUBJECT_CITATION_EDGES: ${NATS_SUBJECT_CITATION_EDGES:-citation-edges}
+  REDIS_HOST:   ${REDIS_HOST:-redis}
+  REDIS_PORT:   ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  REDIS_DB:     ${REDIS_DB:-0}
+  MEILI_URL:    ${MEILI_URL:-http://meilisearch:7700}
+  MEILI_KEY:    ${MEILI_KEY:-dev-master-key}
+  MILVUS_URI:   ${MILVUS_URI:-http://milvus:19530}
+  MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+  NEO4J_URL:    ${NEO4J_URL:-bolt://neo4j:7687}
+  NEO4J_USER:   ${NEO4J_USER:-neo4j}
+  NEO4J_PASSWORD: ${NEO4J_PASSWORD:-changeme-dev-only}
+  S3_ENDPOINT:  ${S3_ENDPOINT:-}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+  S3_BUCKET:    ${S3_BUCKET:-evidencelens-raw}
+  S3_BUCKET_WEBLLM: ${S3_BUCKET_WEBLLM:-evidencelens-webllm}
+  S3_PUBLIC_URL: ${S3_PUBLIC_URL:-}
+  EMBEDDER_GRPC_URL: ${EMBEDDER_GRPC_URL:-embedder:50051}
+  # The processor calls the embedder over HTTP (the gRPC path was never built).
+  # Co-located default derives http://embedder:8080 from EMBEDDER_GRPC_URL. When
+  # the embedder is on another host, set EMBEDDER_HTTP_URL to its PUBLISHED HTTP
+  # port — TrueNAS maps 8091:8080, so working-PC/VPS use http://<TRUENAS_IP>:8091.
+  # Default empty => client derives the co-located URL.
+  EMBEDDER_HTTP_URL: ${EMBEDDER_HTTP_URL:-}
+  SCORER_GRPC_URL:   ${SCORER_GRPC_URL:-scorer:50052}
+  # The gateway calls the scorer over HTTP/SSE (NOT gRPC) for search/readyz.
+  # Must be injected here (the gateway reads process.env.SCORER_HTTP_URL); a
+  # bare line in .env is only used for ${...} substitution and never reaches
+  # the container. On the VPS set SCORER_HTTP_URL=http://<TRUENAS_IP>:8090.
+  SCORER_HTTP_URL:   ${SCORER_HTTP_URL:-http://scorer:8090}
+  # Historical backfill (date-windowed ingesters). BACKFILL=1 makes a capped run
+  # advance the watermark to the LATEST item seen (resume mid-history next run)
+  # instead of jumping to today and skipping the gap. BACKFILL_SINCE seeds the
+  # first run's start date/year. Default off => normal incremental ingest.
+  BACKFILL:          ${BACKFILL:-}
+  BACKFILL_SINCE:    ${BACKFILL_SINCE:-}
+  # BGE-M3 = 1024-d, same on GPU and CPU. Matches the Milvus evidence_v1
+  # collection + the indexer/scorer defaults. Do not change per-host.
+  EMBEDDING_DIM:     ${EMBEDDING_DIM:-1024}
+  # Optional. Empty => disabled. See .env.example "OPTIONAL" section.
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+  TURNSTILE_SECRET: ${TURNSTILE_SECRET:-}
+  INTERNAL_TOKEN:   ${INTERNAL_TOKEN:-}
+
+x-app-defaults: &app-defaults
+  restart: unless-stopped
+  networks: [evidencelens]
+
+# ---------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------
+services:
+
+  # =========================================================
+  # Application services (default profile)
+  #
+  # No depends_on for data services here — each app retries on its own,
+  # and keeping them out of depends_on lets this file run cleanly with
+  # OR without docker-compose.data.yml stacked on top.
+  # =========================================================
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    image: evidencelens-gateway:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: gateway
+      AGENT_URL: ${AGENT_URL:-http://agent:8081/synthesize}
+      # The gateway relays the public /mcp endpoint to the internal mcp-server
+      # (Docker service name) so MCP works through the single public domain with
+      # no extra Traefik route. On the VPS both run in the same compose project.
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://mcp-server:8082}
+      GATEWAY_PORT: ${GATEWAY_PORT:-8080}
+    ports: ["8088:8080"]
+    <<: *app-defaults
+
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    image: evidencelens-agent:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: agent
+      AGENT_PORT: ${AGENT_PORT:-8081}
+      AGENT_PROMPT_PATH: /prompts/agent_system.md
+    ports: ["8089:8081"]
+    <<: *app-defaults
+
+  mcp-server:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    image: evidencelens-mcp:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: mcp-server
+      MCP_TRANSPORT: http
+      MCP_PORT: ${MCP_PORT:-8082}
+      GATEWAY_URL: ${GATEWAY_URL_INTERNAL:-http://gateway:8080}
+    ports: ["8082:8082"]
+    <<: *app-defaults
+
+  processor:
+    # Root build context (like the agent service) so the image can include
+    # repo-root files the processor needs at runtime: config/ (predatory ISSN
+    # list) and infra/scripts/ (enrich_citations.py, run as a scheduled job).
+    build:
+      context: .
+      dockerfile: process/Dockerfile
+    image: evidencelens-processor:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: processor
+      # scispaCy UMLS entity-linker loads ~3-4GB and OOM-kills the processor
+      # under the memory cap, wedging the pipeline. OFF by default (regex
+      # fallback). Set to 1 AND raise the memory limit below to enable.
+      ENABLE_UMLS_LINKER: ${ENABLE_UMLS_LINKER:-}
+      # Pipeline concurrency. Raise on a beefy working PC to drain the NATS
+      # backlog faster (e.g. 200); keep modest on constrained hosts.
+      MAX_CONCURRENT_PIPELINES: ${MAX_CONCURRENT_PIPELINES:-50}
+    deploy:
+      resources:
+        # Env-driven so you can dedicate more of the working PC when it's free
+        # (e.g. PROCESSOR_CPUS=12 PROCESSOR_MEMORY=24G) and dial back otherwise.
+        limits:
+          cpus: "${PROCESSOR_CPUS:-2}"
+          memory: ${PROCESSOR_MEMORY:-4G}
+    <<: *app-defaults
+
+  indexer:
+    build:
+      context: ./index
+      dockerfile: Dockerfile
+    image: evidencelens-indexer:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: indexer
+    <<: *app-defaults
+
+  scorer:
+    build:
+      context: ./scorer
+      dockerfile: Dockerfile
+    image: evidencelens-scorer:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: scorer
+    ports: ["50052:50052", "8090:8090"]
+    <<: *app-defaults
+
+  embedder:
+    build:
+      context: ./embedder
+      dockerfile: Dockerfile
+    image: evidencelens-embedder:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: embedder
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+      BATCH_SIZE: ${EMBEDDER_BATCH_SIZE:-32}
+      MAX_WAIT_MS: ${EMBEDDER_MAX_WAIT_MS:-25}
+    ports:
+      - "50051:50051"
+      - "8091:8080"
+    # No GPU reservation here on purpose: this base def must run on CPU-only
+    # hosts (TrueNAS). A reservations.devices[nvidia] block hard-fails compose
+    # when no NVIDIA runtime is present. GPU is added by the workingpc overlay
+    # (which has the GPU); set EMBEDDING_DEVICE=cuda there.
+    <<: *app-defaults
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: evidencelens-frontend:local
+    environment:
+      NODE_ENV: production
+      GATEWAY_URL: ${GATEWAY_URL_INTERNAL:-http://gateway:8080}
+      NEXT_PUBLIC_GATEWAY_URL: ${NEXT_PUBLIC_GATEWAY_URL:-http://gateway:8080}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://gateway:8080/ws}
+      NEXT_PUBLIC_WEBLLM_URL: ${NEXT_PUBLIC_WEBLLM_URL:-}
+      NEXT_PUBLIC_SITE_URL:   ${NEXT_PUBLIC_SITE_URL:-http://localhost:3000}
+      # Optional. Blank = disabled.
+      NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+      NEXT_PUBLIC_POSTHOG_KEY: ${NEXT_PUBLIC_POSTHOG_KEY:-}
+      NEXT_PUBLIC_POSTHOG_HOST: ${NEXT_PUBLIC_POSTHOG_HOST:-https://us.i.posthog.com}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+    ports: ["3000:3000"]
+    <<: *app-defaults
+
+  # Open Payments /lookup HTTP server. Unlike the other ingesters this is
+  # long-running (default profile): the processor's author-payment-joiner
+  # calls it per author to populate COI badges. The annual bulk CSV load is
+  # triggered out-of-band by POSTing /run. Must keep the service name
+  # `ingester-open-payments` — the processor defaults to that host.
+  ingester-open-payments:
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-open-payments/Dockerfile
+    image: evidencelens-ingester-open-payments:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-open-payments
+      PORT: "8080"
+      # Annual CMS bulk dataset URL (.csv or .zip); the ofelia open-payments-bulk
+      # job reads this to POST /run. Empty = COI stays a no-op (table never loads).
+      OPENPAYMENTS_BULK_URL: ${OPENPAYMENTS_BULK_URL:-}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    <<: *app-defaults
+
+  # =========================================================
+  # Scheduler (default profile)
+  # =========================================================
+  # Renders config.ini.tmpl -> config.ini (envsubst) into a shared volume,
+  # then exits. ofelia can't interpolate ${VAR} itself and job-run
+  # containers don't inherit ofelia's env, so values are baked in here.
