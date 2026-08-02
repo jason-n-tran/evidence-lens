@@ -1,0 +1,36 @@
+# Legacy production overlay — superseded by the split deployment files:
+#
+#   docker-compose.vps.yml          — VPS (gateway, agent, mcp-server only)
+#   docker-compose.truenas-data.yml — TrueNAS data services (NATS, Meili, Neo4j)
+#   docker-compose.truenas.yml      — TrueNAS app services (processor, embedder, scorer, …)
+#
+# See .env.vps.example and .env.truenas.example for the required env vars.
+# This file (docker-compose.prod.yml) is kept as a legacy alias that runs
+# all app services on a single host; prefer the split files for new deploys.
+#
+# Apply (legacy single-host):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+services:
+
+  # ---- App services: not exposed on host ports (Dokploy reverse-proxies) ----
+  gateway:    { ports: [] }
+  agent:      { ports: [] }
+  mcp-server: { ports: [] }
+  scorer:     { ports: [] }
+  embedder:   { ports: [] }
+
+  # ---- Frontend: served from Cloudflare Pages in prod, not from compose ----
+  frontend:
+    profiles: ["__never__"]
+
+  # ---- Observability stack always on in prod ----
+  otel-collector: { profiles: [] }
+  prometheus:     { profiles: [] }
+  grafana:        { profiles: [] }
+
+  # ---- Ingesters always on in prod ----
+  ingester-pubmed:   { profiles: [] }
+  ingester-trials:   { profiles: [] }
+  ingester-fda:      { profiles: [] }
+  ingester-preprint: { profiles: [] }

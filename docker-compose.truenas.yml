@@ -1,0 +1,54 @@
+# TrueNAS app-services overlay — always-on search + indexing.
+#
+# Runs scorer, embedder (CPU), and indexer so search works 24/7 regardless
+# of whether the working PC is on. processor and ingesters live on the
+# working PC (see docker-compose.workingpc.yml) and are disabled here.
+#
+# Postgres, Redis, and Milvus are TrueNAS community apps — point to them
+# via the TrueNAS LAN or Tailscale IP in .env.truenas (see .env.truenas.example).
+#
+# Apply (stacked with docker-compose.truenas-data.yml):
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.truenas-data.yml \
+#                  -f docker-compose.truenas.yml up -d --build
+# or:
+#   npm run up:truenas
+
+services:
+
+  # ---- Disabled on TrueNAS: live on VPS ----
+  gateway:    { profiles: ["__never__"] }
+  agent:      { profiles: ["__never__"] }
+  mcp-server: { profiles: ["__never__"] }
+  frontend:   { profiles: ["__never__"] }
+
+  # ---- Disabled on TrueNAS: live on working PC ----
+  processor:         { profiles: ["__never__"] }
+  ofelia:            { profiles: ["__never__"] }
+  ofelia-config:     { profiles: ["__never__"] }
+  ingester-pubmed:   { profiles: ["__never__"] }
+  ingester-trials:   { profiles: ["__never__"] }
+  ingester-fda:      { profiles: ["__never__"] }
+  ingester-preprint: { profiles: ["__never__"] }
+  ingester-open-payments: { profiles: ["__never__"] }
+
+  # ---- scorer and embedder: expose gRPC ports so VPS can reach via Tailscale ----
+  scorer:
+    ports:
+      - "50052:50052"
+      - "8090:8090"
+
+  embedder:
+    # TrueNAS is CPU-only: build the lightweight CPU image (no CUDA/vLLM).
+    # It runs the SAME model as GPU (BGE-M3, 1024-d) on CPU — just slower. The
+    # vectors are identical to the working-PC GPU embedder, so they share the
+    # Milvus evidence_v1 collection (1024-d) correctly.
+    build:
+      context: ./embedder
+      dockerfile: Dockerfile.cpu
+    environment:
+      EMBEDDING_DEVICE: cpu
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-1024}
+    ports:
+      - "50051:50051"
+      - "8091:8080"

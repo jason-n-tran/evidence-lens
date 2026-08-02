@@ -1,0 +1,55 @@
+# VPS overlay (Hostinger, 4 GB RAM).
+#
+# Only gateway, agent, and mcp-server run here. Every data service and
+# every heavy ML service lives on TrueNAS. Set TrueNAS addresses in your
+# VPS .env (see .env.vps.example), using the TrueNAS Tailscale IP:
+#
+#   POSTGRES_HOST=<TRUENAS_TAILSCALE_IP>
+#   REDIS_HOST=<TRUENAS_TAILSCALE_IP>
+#   NATS_URL=nats://<TRUENAS_TAILSCALE_IP>:4222
+#   MEILI_URL=http://<TRUENAS_TAILSCALE_IP>:7700
+#   MILVUS_URI=http://<TRUENAS_TAILSCALE_IP>:19530
+#   NEO4J_URL=bolt://<TRUENAS_TAILSCALE_IP>:7687
+#   EMBEDDER_GRPC_URL=<TRUENAS_TAILSCALE_IP>:50051
+#   SCORER_HTTP_URL=http://<TRUENAS_TAILSCALE_IP>:8090   # gateway search uses HTTP/SSE, not gRPC
+#
+# Apply:
+#   docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --build
+# or:
+#   npm run up:vps
+
+services:
+
+  # ---- Public-facing services: ports stripped (Dokploy/Traefik handles ingress) ----
+  #
+  # NETWORK NOTE (Dokploy-specific): when a Domain is attached to a service,
+  # Dokploy rewires it onto `dokploy-network` for Traefik and it ends up on the
+  # compose project `default` network — NOT the custom `evidencelens` network the
+  # *app-defaults anchor would otherwise give it. The gateway has the Domain, so
+  # it lands on `default`; agent and mcp-server (no Domain) stay on `evidencelens`.
+  # Result: the gateway can't resolve `agent`/`mcp-server` by name and its
+  # internal proxies (/llm/synthesize → agent, /mcp → mcp-server) fail with a
+  # 502 / "bad address". Fix: also attach agent + mcp-server to `default` so they
+  # co-reside with the gateway. Listing both networks is safe whether compose
+  # merges or replaces the anchor's `networks`, and works wherever the gateway
+  # lands (default now, or evidencelens again after a future Dokploy change).
+  gateway:    { ports: [] }
+  agent:      { ports: [], networks: [evidencelens, default] }
+  mcp-server: { ports: [], networks: [evidencelens, default] }
+
+  # ---- Everything below runs on TrueNAS, not the VPS ----
+  processor:         { profiles: ["__never__"] }
+  indexer:           { profiles: ["__never__"] }
+  scorer:            { profiles: ["__never__"] }
+  embedder:          { profiles: ["__never__"] }
+  frontend:          { profiles: ["__never__"] }
+  ofelia:            { profiles: ["__never__"] }
+  ofelia-config:     { profiles: ["__never__"] }
+  ingester-pubmed:   { profiles: ["__never__"] }
+  ingester-trials:   { profiles: ["__never__"] }
+  ingester-fda:      { profiles: ["__never__"] }
+  ingester-preprint: { profiles: ["__never__"] }
+  ingester-open-payments: { profiles: ["__never__"] }
+  otel-collector:    { profiles: ["__never__"] }
+  prometheus:        { profiles: ["__never__"] }
+  grafana:           { profiles: ["__never__"] }

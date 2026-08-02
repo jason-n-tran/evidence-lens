@@ -1,0 +1,96 @@
+# Working-PC overlay — heavy compute pipeline (intermittent).
+#
+# Runs processor (scispaCy NLP) + ingesters. Search-serving services (scorer,
+# embedder, indexer) stay on TrueNAS so search works 24/7 when this PC is off.
+#
+# The PC is stateless: no volumes (all output flows to TrueNAS via NATS).
+# Turn on -> drains NATS backlog -> turn off -> users never notice.
+#
+# Point all data services at TrueNAS in .env.workingpc:
+#   POSTGRES_HOST=<TRUENAS_TAILSCALE_IP>
+#   NATS_URL=nats://<TRUENAS_TAILSCALE_IP>:4222
+#   (see .env.workingpc.example for the full list)
+#
+# Apply:
+#   docker compose -f docker-compose.yml -f docker-compose.workingpc.yml up -d --build
+# or:
+#   npm run up:workingpc
+#
+# ---------------------------------------------------------------------------
+# RESOURCE SCALING (env-driven — set in .env.workingpc, no file edits needed):
+#
+#   When the PC is free and you want to drain fast:
+#     PROCESSOR_CPUS=12
+#     PROCESSOR_MEMORY=24G
+#     MAX_CONCURRENT_PIPELINES=200
+#
+#   Modest / shared use:
+#     PROCESSOR_CPUS=4
+#     PROCESSOR_MEMORY=8G
+#     MAX_CONCURRENT_PIPELINES=50      (the default)
+#
+# GPU (optional): the embedder is the GPU-bound step. By default it stays on
+# TrueNAS (CPU). To run a LOCAL GPU embedder on this PC instead — using the
+# idle GPU for much faster embedding — set in .env.workingpc:
+#     RUN_LOCAL_EMBEDDER=1            (informational; see note below)
+#     EMBEDDING_DEVICE=cuda
+#     EMBEDDER_BATCH_SIZE=128         (bigger batches pay off on GPU)
+#     EMBEDDER_GPU_COUNT=1
+# and point the processor at the local embedder in .env.workingpc:
+#     EMBEDDER_GRPC_URL=embedder:50051
+# Requires the NVIDIA Container Toolkit + WSL2 (Windows). Without a GPU/toolkit,
+# leave EMBEDDER_GPU_COUNT unset and the embedder block below stays CPU-only.
+# ---------------------------------------------------------------------------
+
+services:
+
+  # ---- Disabled: live on TrueNAS (always-on) or VPS ----
+  gateway:    { profiles: ["__never__"] }
+  agent:      { profiles: ["__never__"] }
+  mcp-server: { profiles: ["__never__"] }
+  frontend:   { profiles: ["__never__"] }
+  scorer:     { profiles: ["__never__"] }
+  indexer:    { profiles: ["__never__"] }
+
+  # ---- Local GPU embedder (opt-in) ----
+  # Disabled by default (TrueNAS serves embedding). Enable by setting
+  # EMBEDDER_GPU_COUNT in .env.workingpc, then move it into the default profile
+  # by setting EMBEDDER_PROFILE="" (empty). When EMBEDDER_PROFILE=__never__
+  # (default) this stays off and the processor uses the TrueNAS embedder.
+  embedder:
+    profiles: ["${EMBEDDER_PROFILE:-__never__}"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${EMBEDDER_GPU_COUNT:-1}
+              capabilities: [gpu]
+
+  # ---- Ingesters: stay DOWN until `npm run catchup` runs them ----
+  # They keep the base compose's `ingest` profile (no override here), so
+  # `up:workingpc` does NOT start them — only the always-on processor comes up.
+  # catchup invokes each via `--profile ingest run --rm`, so they run once and
+  # exit. This is deliberate: previously they were forced into the default
+  # profile (profiles: []), so `up:workingpc` ran them at startup, which
+  # advanced the trials/fda watermark to "today" — then catchup minutes later
+  # found an empty [today,today] window and fetched 0. Leaving them in the
+  # `ingest` profile means catchup is the single, authoritative trigger.
+  #
+  # Every ingester inherits Postgres + S3 + NATS creds from .env via the base
+  # compose's *app-env anchor. If a secret contains a literal '$', escape it as
+  # '$$' IN .env so compose emits a single '$' (see .env.workingpc.example).
+
+  # ---- ofelia: OFF on the working PC ----
+  # The PC runs on an irregular schedule (off overnight / at work), so a cron
+  # sidecar would miss most of its fire times. Instead, run all due ingest +
+  # maintenance jobs on demand when the PC is on:  npm run catchup
+  # (see tools/catchup.* and the catchup npm scripts).
+  ofelia:        { profiles: ["__never__"] }
+  ofelia-config: { profiles: ["__never__"] }
+
+  # processor inherits the default profile and runs automatically. Its CPU/mem
+  # caps + MAX_CONCURRENT_PIPELINES are env-driven (see base compose + the
+  # RESOURCE SCALING note above). DB/S3 creds come from .env.
+
+

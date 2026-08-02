@@ -1,0 +1,186 @@
+# Data plane — Postgres, NATS, Redis, Meilisearch, Milvus (etcd + milvus), Neo4j, plus
+# a one-shot migrate runner.
+#
+# Used in local dev: `npm run up` brings this up alongside docker-compose.yml.
+# Production typically points app services at an external data plane (e.g.
+# TrueNAS) and skips this file — see docker-compose.prod.yml.
+
+name: evidencelens
+
+networks:
+  evidencelens:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  nats_data:
+  redis_data:
+  meili_data:
+  etcd_data:
+  milvus_data:
+  neo4j_data:
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-evidencelens}
+      POSTGRES_USER:     ${POSTGRES_USER:-evidencelens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme-dev-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/sql:/docker-entrypoint-initdb.d:ro
+    ports: ["5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-evidencelens} -d ${POSTGRES_DB:-evidencelens}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-sd=/data", "-m=8222"]
+    volumes: ["nats_data:/data"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  # Valkey — drop-in Redis 7.2 replacement. Service name kept as "redis" so all
+  # REDIS_HOST=redis references and the ioredis clients connect unchanged.
+  redis:
+    image: valkey/valkey:7.2-alpine
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes: ["redis_data:/data"]
+    ports: ["6380:6379"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.13
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_KEY:-dev-master-key}
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_ENV: ${MEILI_ENV:-development}
+    volumes: ["meili_data:/meili_data"]
+    ports: ["7700:7700"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:7700/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    command: >
+      etcd
+      --advertise-client-urls=http://etcd:2379
+      --listen-client-urls=http://0.0.0.0:2379
+      --data-dir=/etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    volumes: ["etcd_data:/etcd"]
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  milvus:
+    image: milvusdb/milvus:v2.5.6
+    command: milvus run standalone
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      COMMON_STORAGETYPE: local
+    volumes: ["milvus_data:/var/lib/milvus"]
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      etcd: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9091/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme-dev-only}
+      NEO4J_dbms_memory_heap_max__size: ${NEO4J_HEAP:-1G}
+    volumes: ["neo4j_data:/data"]
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:7474/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  # App-service overrides: wait for the local Milvus to pass its health check
+  # before starting the services that need it. These stanzas only take effect
+  # when this file is stacked with docker-compose.yml (npm run up / up:full).
+  # They are harmless no-ops when the app services point at an external Milvus.
+  indexer:
+    depends_on:
+      milvus: { condition: service_healthy }
+
+  scorer:
+    depends_on:
+      milvus: { condition: service_healthy }
+
+  processor:
+    depends_on:
+      milvus: { condition: service_healthy }
+
+  # One-shot DB migration. Runs after postgres is healthy, applies SQL,
+  # exits. Re-run safely (init scripts must be idempotent).
+  migrate:
+    image: postgres:15-alpine
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_DB:   ${POSTGRES_DB:-evidencelens}
+      POSTGRES_USER: ${POSTGRES_USER:-evidencelens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme-dev-only}
+    volumes:
+      - ./infra/sql:/sql:ro
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        for f in /sql/*.sql; do
+          echo "==> $${f}"
+          PGPASSWORD="$${POSTGRES_PASSWORD}" psql -h "$${POSTGRES_HOST}" -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -f "$${f}"
+        done
+    restart: "no"
+    networks: [evidencelens]

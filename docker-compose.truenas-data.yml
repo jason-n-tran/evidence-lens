@@ -1,0 +1,119 @@
+# TrueNAS data services — NATS, Meilisearch, Neo4j.
+#
+# Postgres, Redis, and Milvus are NOT here: those are installed as
+# TrueNAS community apps and bind to the host network. Set their
+# addresses in .env.truenas using the TrueNAS LAN or Tailscale IP.
+#
+# Stack with the app overlay:
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.truenas-data.yml \
+#                  -f docker-compose.truenas.yml up -d --build
+# or:
+#   npm run up:truenas
+#
+# Run DB migrations (one-shot, against the community-app Postgres):
+#   docker compose -f docker-compose.yml \
+#                  -f docker-compose.truenas-data.yml \
+#                  -f docker-compose.truenas.yml \
+#                  --profile migrate run --rm migrate
+
+name: evidencelens
+
+networks:
+  evidencelens:
+    driver: bridge
+
+volumes:
+  nats_data:
+  meili_data:
+  neo4j_data:
+  valkey_data:
+
+services:
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-sd=/data", "-m=8222"]
+    volumes: ["nats_data:/data"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.13
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_KEY:-dev-master-key}
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_ENV: production
+    volumes: ["meili_data:/meili_data"]
+    ports: ["7700:7700"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:7700/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme-dev-only}
+      NEO4J_dbms_memory_heap_max__size: ${NEO4J_HEAP:-2G}
+    volumes: ["neo4j_data:/data"]
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:7474/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  # Valkey (Redis 7.2 drop-in). No Valkey community app exists, so this stack
+  # owns it. Service name "redis" so REDIS_HOST=redis + ioredis clients connect
+  # unchanged. Port published for the VPS gateway over Tailscale.
+  redis:
+    image: valkey/valkey:7.2-alpine
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes: ["valkey_data:/data"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [evidencelens]
+
+  # One-shot migration runner against the external Postgres community app.
+  # Run manually: docker compose ... --profile migrate run --rm migrate
+  migrate:
+    profiles: ["migrate"]
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_HOST:     ${POSTGRES_HOST}
+      POSTGRES_DB:       ${POSTGRES_DB:-evidencelens}
+      POSTGRES_USER:     ${POSTGRES_USER:-evidencelens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./infra/sql:/sql:ro
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -e
+        for f in /sql/*.sql; do
+          echo "==> $${f}"
+          PGPASSWORD="$${POSTGRES_PASSWORD}" psql -h "$${POSTGRES_HOST}" -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -f "$${f}"
+        done
+    restart: "no"
+    networks: [evidencelens]
