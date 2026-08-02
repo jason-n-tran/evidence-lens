@@ -1,0 +1,107 @@
+# OpenTelemetry Collector — production (NAS).
+#
+# Receives OTLP from every service (gRPC :4317, HTTP :4318), exports to
+# Grafana Cloud free tier (Loki for logs, Tempo for traces, Mimir for
+# metrics). Series count is the binding constraint; aggressive
+# attribute drop and metric filtering applied.
+
+receivers:
+  otlp:
+    protocols:
+      grpc: { endpoint: 0.0.0.0:4317 }
+      http: { endpoint: 0.0.0.0:4318 }
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+  # Drop high-cardinality attributes that would explode Mimir series.
+  attributes/drop_high_cardinality:
+    actions:
+      - key: http.user_agent
+        action: delete
+      - key: net.peer.ip
+        action: delete
+      - key: client.address
+        action: delete
+      - key: session.id
+        action: delete
+
+  # Resource: tag everything with the service name + deployment env.
+  resource:
+    attributes:
+      - key: deployment.environment
+        from_attribute: OTEL_RESOURCE_ATTRIBUTES
+        action: insert
+
+  # Filter out low-value metrics that would hit the 10k series cap.
+  filter/metrics:
+    metrics:
+      exclude:
+        match_type: regexp
+        metric_names:
+          - "^process_.*"
+          - "^go_.*"
+          - "^otelcol_.*"
+
+exporters:
+  loki:
+    endpoint: ${env:GRAFANA_LOKI_URL}
+    auth:
+      authenticator: basicauth/loki
+    default_labels_enabled:
+      exporter: false
+      job: true
+
+  otlphttp/tempo:
+    endpoint: ${env:GRAFANA_TEMPO_URL}
+    auth:
+      authenticator: basicauth/tempo
+    compression: gzip
+
+  prometheusremotewrite:
+    endpoint: ${env:GRAFANA_MIMIR_URL}
+    auth:
+      authenticator: basicauth/mimir
+    resource_to_telemetry_conversion:
+      enabled: true
+
+extensions:
+  basicauth/loki:
+    client_auth:
+      username: ${env:GRAFANA_LOKI_USER}
+      password: ${env:GRAFANA_LOKI_PASSWORD}
+  basicauth/tempo:
+    client_auth:
+      username: ${env:GRAFANA_TEMPO_USER}
+      password: ${env:GRAFANA_TEMPO_PASSWORD}
+  basicauth/mimir:
+    client_auth:
+      username: ${env:GRAFANA_MIMIR_USER}
+      password: ${env:GRAFANA_MIMIR_PASSWORD}
+
+service:
+  extensions: [basicauth/loki, basicauth/tempo, basicauth/mimir]
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/drop_high_cardinality, resource, batch]
+      exporters: [otlphttp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/metrics, resource, batch]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/drop_high_cardinality, resource, batch]
+      exporters: [loki]
