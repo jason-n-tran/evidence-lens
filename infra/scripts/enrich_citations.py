@@ -195,3 +195,115 @@ def update_neo4j(driver, scores: dict[str, tuple[int, float]], dry_run: bool) ->
         updated += len(batch_ids)
         print(f"  Neo4j: {updated:,}/{len(ids):,}", end="\r", flush=True)
     print(f"  Neo4j: {updated:,}/{len(ids):,} done")
+
+
+def update_meilisearch(
+    client: meilisearch.Client,
+    index_name: str,
+    scores: dict[str, tuple[int, float]],
+    real_ids: set[str],
+    dry_run: bool,
+) -> None:
+    """
+    Partial-update Meilisearch documents.
+    The Meilisearch primary key for "pubmed:12345678" is "pubmed_12345678"
+    (the indexer replaces the colon with an underscore).
+
+    Only real (ingested) ids are written. Meilisearch update_documents is an
+    upsert, so pushing a ghost id would CREATE a content-less document — the
+    root cause of the "empty ghost ids" in the index. Restricting writes to
+    `real_ids` keeps enrichment from materializing ghosts.
+    """
+    index = client.index(index_name)
+
+    # Only push real docs with non-zero scores. Skipping ghosts is what
+    # prevents content-less documents from being created; skipping all-zero
+    # docs avoids pointless writes.
+    non_zero = {
+        nid: v for nid, v in scores.items()
+        if nid in real_ids and (v[0] > 0 or v[1] > 0.0)
+    }
+    skipped_ghosts = sum(
+        1 for nid, v in scores.items()
+        if nid not in real_ids and (v[0] > 0 or v[1] > 0.0)
+    )
+    print(f"\nUpdating Meilisearch for {len(non_zero):,} real documents with non-zero scores…")
+    print(f"  (skipped {skipped_ghosts:,} non-zero ghost ids — not in Meili, would create empty docs)")
+    if dry_run:
+        sample = list(non_zero.items())[:5]
+        for nid, (cnt, pr) in sample:
+            print(f"  {nid}: citation_count={cnt}, citation_pagerank={pr:.6f}")
+        print("  [dry run — skipped actual writes]")
+        return
+
+    items = list(non_zero.items())
+    updated = 0
+    for i in range(0, len(items), MEILI_BATCH):
+        batch = items[i : i + MEILI_BATCH]
+        # Push only citation_pagerank (the graph's authoritative contribution).
+        # citation_count is left to the parser-set, upstream-provided value in
+        # Meili so we never clobber a real (large) count with our small
+        # in-corpus in-degree. (Neo4j keeps both via a max() guard.)
+        docs = [
+            {
+                "id": nid.replace(":", "_"),
+                "citation_pagerank": pr,
+            }
+            for nid, (cnt, pr) in batch
+        ]
+        task = index.update_documents(docs)
+        client.wait_for_task(task.task_uid, timeout_in_ms=60_000)
+        updated += len(batch)
+        print(f"  Meilisearch: {updated:,}/{len(items):,}", end="\r", flush=True)
+    print(f"  Meilisearch: {updated:,}/{len(items):,} done")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Enrich citation scores from Neo4j into Meilisearch.")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Compute and print scores without writing anywhere.")
+    args = parser.parse_args()
+
+    print(f"Neo4j:       {NEO4J_URL}")
+    print(f"Meilisearch: {MEILI_URL} / index '{INDEX_NAME}'")
+    print(f"Mode:        {'DRY RUN' if args.dry_run else 'LIVE'}\n")
+
+    driver = GraphDatabase.driver(NEO4J_URL, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    try:
+        driver.verify_connectivity()
+    except Exception as e:
+        print(f"ERROR: cannot connect to Neo4j at {NEO4J_URL}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    client = meilisearch.Client(MEILI_URL, MEILI_KEY)
+    try:
+        client.get_version()
+    except Exception as e:
+        print(f"ERROR: cannot connect to Meilisearch at {MEILI_URL}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    scores, real_ids = compute_scores(driver)
+
+    non_zero_count = sum(1 for cnt, _ in scores.values() if cnt > 0)
+    max_cited = max((cnt for cnt, _ in scores.values()), default=0)
+    print(f"\n  {non_zero_count:,} documents have at least one inbound citation")
+    print(f"  Most-cited document: {max_cited} inbound citations")
+
+    if non_zero_count == 0:
+        print("\nNo citation edges found in Neo4j. Either:")
+        print("  1. The indexer hasn't finished processing documents yet — wait and retry.")
+        print("  2. The PubMed ingest produced no reference lists (unlikely for recent articles).")
+        print("  3. Neo4j is not being populated — check indexer logs.")
+        driver.close()
+        return
+
+    update_neo4j(driver, scores, args.dry_run)
+    update_meilisearch(client, INDEX_NAME, scores, real_ids, args.dry_run)
+    driver.close()
+
+    print(f"\nDone. Re-run after each ingest batch to keep citation scores current.")
+    print("Tip: add this to ofelia as a nightly job once you have a stable dataset.")
+
+
+if __name__ == "__main__":
+    main()
