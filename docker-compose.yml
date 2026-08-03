@@ -484,3 +484,89 @@ services:
     restart: "no"
 
   # Semantic Scholar: SEMANTIC_SCHOLAR_API_KEY (optional) raises rate limits.
+  ingester-semanticscholar:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-semanticscholar/Dockerfile
+    image: evidencelens-ingester-semanticscholar:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-semanticscholar
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+      S2_QUERY: ${S2_QUERY:-}
+    networks: [evidencelens]
+    restart: "no"
+
+  ingester-clinvar:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-clinvar/Dockerfile
+    image: evidencelens-ingester-clinvar:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-clinvar
+      NCBI_API_KEY: ${NCBI_API_KEY:-}
+      NCBI_TOOL: ${NCBI_TOOL:-evidencelens}
+      NCBI_EMAIL: ${NCBI_EMAIL:-}
+    networks: [evidencelens]
+    restart: "no"
+
+  # =========================================================
+  # Smoke test (`--profile test`, invoked via `npm run smoke`)
+  # =========================================================
+  smoke:
+    profiles: ["test"]
+    build:
+      context: ./tests/integration/smoke
+      dockerfile: Dockerfile
+    image: evidencelens-smoke:local
+    environment:
+      GATEWAY: ${SMOKE_GATEWAY_URL:-http://gateway:8080}
+      SMOKE_WAIT_SEC: ${SMOKE_WAIT_SEC:-180}
+    networks: [evidencelens]
+    restart: "no"
+
+  # =========================================================
+  # Observability (--profile observability)
+  # All optional. Apps export to OTEL_EXPORTER_OTLP_ENDPOINT only
+  # when it's set; leave blank to disable telemetry entirely.
+  # =========================================================
+  otel-collector:
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./infra/otel/collector-config.dev.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"
+    <<: *app-defaults
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.0.1
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+    volumes:
+      - ./infra/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    ports: ["9090:9090"]
+    <<: *app-defaults
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana:/etc/grafana/provisioning:ro
+    ports: ["3001:3000"]
+    <<: *app-defaults
