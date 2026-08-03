@@ -1,0 +1,10 @@
+{"id":"q-001","query":"sglt2 inhibitors heart failure outcomes","intent":"clinical","relevant_pmids":["31535829","32865377","31760085"],"min_ndcg":0.65}
+{"id":"q-002","query":"crispr cas9 sickle cell disease","intent":"clinical","relevant_pmids":["33283989","36688547"],"min_ndcg":0.60}
+{"id":"q-003","query":"glp-1 receptor agonist obesity weight loss","intent":"clinical","relevant_pmids":["33567185","37267473"],"min_ndcg":0.65}
+{"id":"q-004","query":"covid-19 long covid neurological symptoms","intent":"clinical","relevant_pmids":["33753937","34307272"],"min_ndcg":0.55}
+{"id":"q-005","query":"anticoagulation atrial fibrillation stroke prevention","intent":"clinical","relevant_pmids":["19717844","21870978"],"min_ndcg":0.65}
+{"id":"q-006","query":"pembrolizumab non-small cell lung cancer first line","intent":"oncology","relevant_pmids":["27718847","30955977"],"min_ndcg":0.60}
+{"id":"q-007","query":"metformin cardiovascular outcomes long term","intent":"clinical","relevant_pmids":["18784090"],"min_ndcg":0.55}
+{"id":"q-008","query":"transcatheter aortic valve replacement low risk","intent":"clinical","relevant_pmids":["30883058"],"min_ndcg":0.60}
+{"id":"q-009","query":"semaglutide cardiovascular events trial","intent":"clinical","relevant_pmids":["27295427","37889366"],"min_ndcg":0.65}
+{"id":"q-010","query":"FDA recalled blood pressure medications 2024","intent":"safety","relevant_pmids":[],"min_ndcg":0.50}
