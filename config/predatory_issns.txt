@@ -1,0 +1,30 @@
+# Snapshot of journal ISSNs flagged as predatory or low-quality.
+#
+# Format: one ISSN per line, no qualifiers. '#' comments and blank lines are
+# ignored. Matching is normalized (hyphen- and case-insensitive — see
+# process/main.py _norm_issn), so "1234-5678", "12345678", and "1234-567x" all
+# match the same journal. When this file has no ISSN entries, every journal is
+# treated as non-predatory and the "exclude predatory journals" filter is a
+# no-op.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# IMPORTANT — this MUST be an ISSN list, not a name list.
+# The matcher keys on journal.issn. The well-known free Beall's mirrors
+# (beallslist.net, github.com/stop-predatory-journals) are organized by
+# journal/publisher NAME and URL with NO ISSNs — loading them here does nothing.
+# Use an ISSN-keyed source instead:
+#   - Strinzel et al. 2019 (mBio 10:e00411-19) supplementary data: ~8,266
+#     Beall/Cabells journals cross-matched to the ISSN registry. Pull the
+#     ISSN/e-ISSN columns from their supplementary table.
+#   - Cabells Predatory Reports export (subscription; includes ISSNs).
+#   - Your institution library's ISSN blocklist.
+# Calling a journal "predatory" is a reputational claim; a wrong ISSN here
+# mislabels a legitimate journal. Vet the source and refresh periodically.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# --- EXAMPLE ENTRY (reserved test ISSN, matches nothing real) ---
+# This single placeholder lets you verify the feature end-to-end: ingest a doc
+# whose journal.issn is 0000-0000 and confirm it gets is_predatory=true and is
+# removed by the "exclude predatory journals" filter. Delete it once you load a
+# real list.
+0000-0000

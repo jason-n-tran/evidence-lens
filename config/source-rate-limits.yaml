@@ -1,0 +1,48 @@
+# Per-source rate limits, polite-pool emails, and User-Agent strings.
+# Consumed by ingestcommon at startup.
+
+sources:
+  pubmed:
+    requests_per_sec: 10              # with API key (3 without)
+    burst: 20
+    user_agent: "EvidenceLens-PubMed/0.1 (mailto:contact@example.com)"
+  preprint:
+    requests_per_sec: 5
+    burst: 10
+    user_agent: "EvidenceLens-preprint/0.1 (mailto:contact@example.com)"
+  trials:
+    requests_per_sec: 5
+    burst: 10
+    user_agent: "EvidenceLens-Trials/0.1 (mailto:contact@example.com)"
+  ictrp:
+    requests_per_sec: 1
+    burst: 2
+    user_agent: "EvidenceLens-ICTRP/0.1 (mailto:contact@example.com)"
+  fda:
+    requests_per_sec: 4               # 240/min/key
+    burst: 8
+    user_agent: "EvidenceLens-FDA/0.1 (mailto:contact@example.com)"
+  openalex:
+    requests_per_sec: 10              # polite pool
+    burst: 20
+    user_agent: "EvidenceLens-OpenAlex/0.1 (mailto:contact@example.com)"
+  crossref:
+    requests_per_sec: 50              # polite pool
+    burst: 100
+    user_agent: "EvidenceLens/0.1 (mailto:contact@example.com)"
+  unpaywall:
+    requests_per_sec: 100
+    burst: 200
+    user_agent: "EvidenceLens-Unpaywall/0.1 (mailto:contact@example.com)"
+  nih-reporter:
+    requests_per_sec: 1
+    burst: 2
+    user_agent: "EvidenceLens-NIH-RePORTER/0.1 (mailto:contact@example.com)"
+  cochrane:
+    requests_per_sec: 1
+    burst: 2
+    user_agent: "EvidenceLens-Cochrane/0.1 (mailto:contact@example.com)"
+  guidelines:
+    requests_per_sec: 1
+    burst: 2
+    user_agent: "EvidenceLens-Guidelines/0.1 (mailto:contact@example.com)"

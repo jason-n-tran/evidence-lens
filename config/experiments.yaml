@@ -1,0 +1,41 @@
+# Pre-launch A/B experiments (spec section 11.5).
+# Configured + instrumented even if not yet running. Frontend reads this
+# via Firestore once enabled=true.
+
+experiments:
+  rrf_k_value:
+    enabled: false
+    description: "RRF fusion k constant — controls how aggressively low-rank items are weighted."
+    variants:
+      - { name: control,    weight: 50, params: { k: 60 } }
+      - { name: aggressive, weight: 50, params: { k: 30 } }
+    primary_metric: ndcg_at_10
+    min_sample_size: 5000
+
+  recency_half_life:
+    enabled: false
+    description: "Days for the recency-decay half-life. Default 730d (~2y)."
+    variants:
+      - { name: control, weight: 33, params: { half_life_days: 730 } }
+      - { name: short,   weight: 33, params: { half_life_days: 365 } }
+      - { name: long,    weight: 34, params: { half_life_days: 1460 } }
+    primary_metric: ndcg_at_10
+    min_sample_size: 3000
+
+  vector_weight_in_rrf:
+    enabled: false
+    description: "Replace pure RRF with a weighted RRF that biases toward semantic relevance."
+    variants:
+      - { name: control,         weight: 50, params: { vector_weight: 1.0 } }
+      - { name: vector_heavy,    weight: 50, params: { vector_weight: 1.5 } }
+    primary_metric: click_position_mean
+    min_sample_size: 4000
+
+  coi_demotion:
+    enabled: false
+    description: "Demote results where any author has Open Payments matches > $50k from the same year."
+    variants:
+      - { name: control,  weight: 50, params: { coi_demotion: 0.0 } }
+      - { name: demote,   weight: 50, params: { coi_demotion: 0.3 } }
+    primary_metric: dwell_time_mean
+    min_sample_size: 5000
