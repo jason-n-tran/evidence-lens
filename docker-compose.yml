@@ -382,3 +382,105 @@ services:
   # Crossref is a DOI-ENRICHMENT ingester, not a bulk/delta fetcher. It looks up
   # one DOI at a time (CROSSREF_DOI=...) or drains a batch from the
   # crossref_enrich_queue table the processor populates. No MAX_PER_RUN knob.
+  ingester-crossref:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-crossref/Dockerfile
+    image: evidencelens-ingester-crossref:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-crossref
+      UNPAYWALL_EMAIL: ${UNPAYWALL_EMAIL:-contact@example.com}
+    networks: [evidencelens]
+    restart: "no"
+
+  ingester-nih-reporter:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-nih-reporter/Dockerfile
+    image: evidencelens-ingester-nih-reporter:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-nih-reporter
+    networks: [evidencelens]
+    restart: "no"
+
+  ingester-chembl:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-chembl/Dockerfile
+    image: evidencelens-ingester-chembl:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-chembl
+    networks: [evidencelens]
+    restart: "no"
+
+  ingester-nsf:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-nsf/Dockerfile
+    image: evidencelens-ingester-nsf:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-nsf
+    networks: [evidencelens]
+    restart: "no"
+
+  ingester-hpo:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-hpo/Dockerfile
+    image: evidencelens-ingester-hpo:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-hpo
+    networks: [evidencelens]
+    restart: "no"
+
+  ingester-europepmc:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-europepmc/Dockerfile
+    image: evidencelens-ingester-europepmc:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-europepmc
+    networks: [evidencelens]
+    restart: "no"
+
+  # CORE needs a free API key (CORE_API_KEY); skips its run when unset.
+  ingester-core:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-core/Dockerfile
+    image: evidencelens-ingester-core:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-core
+      CORE_API_KEY: ${CORE_API_KEY:-}
+    networks: [evidencelens]
+    restart: "no"
+
+  # Unpaywall is per-DOI OA enrichment; requires a real contact email.
+  ingester-unpaywall:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-unpaywall/Dockerfile
+    image: evidencelens-ingester-unpaywall:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-unpaywall
+      UNPAYWALL_EMAIL: ${UNPAYWALL_EMAIL:-contact@example.com}
+    networks: [evidencelens]
+    restart: "no"
+
+  # Semantic Scholar: SEMANTIC_SCHOLAR_API_KEY (optional) raises rate limits.
