@@ -263,3 +263,122 @@ services:
   # Renders config.ini.tmpl -> config.ini (envsubst) into a shared volume,
   # then exits. ofelia can't interpolate ${VAR} itself and job-run
   # containers don't inherit ofelia's env, so values are baked in here.
+  ofelia-config:
+    image: alpine:3.20
+    # Command is inlined (not a mounted .sh) so a CRLF checkout on Windows
+    # can't break `sh`. The template is stripped of any \r before envsubst
+    # for the same reason. envsubst only touches the listed vars, leaving
+    # ofelia's own `$$POSTGRES_*` escapes intact.
+    entrypoint:
+      - sh
+      - -c
+      - >
+        apk add --no-cache gettext >/dev/null &&
+        tr -d '\r' < /tmpl/config.ini.tmpl |
+        envsubst '$$NCBI_API_KEY $$NCBI_TOOL $$NCBI_EMAIL $$OPENFDA_API_KEY $$NATS_URL $$DATABASE_URL $$S3_ENDPOINT $$S3_ACCESS_KEY_ID $$S3_SECRET_ACCESS_KEY $$S3_BUCKET $$OPENPAYMENTS_BULK_URL'
+        > /out/config.ini &&
+        echo "ofelia config rendered to /out/config.ini"
+    environment:
+      <<: *app-env
+      NCBI_API_KEY: ${NCBI_API_KEY:-}
+      NCBI_TOOL: ${NCBI_TOOL:-evidencelens}
+      NCBI_EMAIL: ${NCBI_EMAIL:-}
+      OPENFDA_API_KEY: ${OPENFDA_API_KEY:-}
+      # CMS Open Payments annual General-Payment dataset (.csv or .zip). Set in
+      # .env to enable COI badges. Link: https://openpaymentsdata.cms.gov/datasets
+      OPENPAYMENTS_BULK_URL: ${OPENPAYMENTS_BULK_URL:-}
+    volumes:
+      - ./infra/ofelia/config.ini.tmpl:/tmpl/config.ini.tmpl:ro
+      - ofelia_config:/out
+    networks: [evidencelens]
+    restart: "no"
+
+  # ofelia execs the ingesters + jobs on cron schedules
+  # defined in infra/ofelia/config.ini (rendered by ofelia-config).
+  ofelia:
+    image: mcuadros/ofelia:latest
+    command: ["daemon", "--config=/etc/ofelia/config.ini"]
+    depends_on:
+      ofelia-config:
+        condition: service_completed_successfully
+    volumes:
+      - ofelia_config:/etc/ofelia:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    <<: *app-defaults
+
+  # =========================================================
+  # Ingesters (--profile ingest)
+  # One-shot containers. ofelia triggers them on schedule;
+  # `docker compose --profile ingest run --rm ingester-X` for ad-hoc.
+  # =========================================================
+  ingester-pubmed:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-pubmed/Dockerfile
+    image: evidencelens-ingester-pubmed:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-pubmed
+      NCBI_API_KEY: ${NCBI_API_KEY:-}
+      NCBI_TOOL: ${NCBI_TOOL:-evidencelens}
+      NCBI_EMAIL: ${NCBI_EMAIL:-}
+      PUBMED_MAX_PER_RUN: ${PUBMED_MAX_PER_RUN:-}
+    networks: [evidencelens]
+    restart: "no"
+
+  ingester-trials:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-trials/Dockerfile
+    image: evidencelens-ingester-trials:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-trials
+    networks: [evidencelens]
+    restart: "no"
+
+  ingester-fda:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-fda/Dockerfile
+    image: evidencelens-ingester-fda:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-fda
+      OPENFDA_API_KEY: ${OPENFDA_API_KEY:-}
+    networks: [evidencelens]
+    restart: "no"
+
+  ingester-preprint:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-preprint/Dockerfile
+    image: evidencelens-ingester-preprint:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-preprint
+    networks: [evidencelens]
+    restart: "no"
+
+  ingester-openalex:
+    profiles: ["ingest"]
+    build:
+      context: ./ingest
+      dockerfile: cmd/ingester-openalex/Dockerfile
+    image: evidencelens-ingester-openalex:local
+    environment:
+      <<: *app-env
+      OTEL_SERVICE_NAME: ingester-openalex
+      # REST delta path by default (bulk S3 path needs AWS creds for the public
+      # OpenAlex bucket). Override to "true" only for a full bulk backfill.
+      OPENALEX_USE_BULK: ${OPENALEX_USE_BULK:-false}
+    networks: [evidencelens]
+    restart: "no"
+
+  # Crossref is a DOI-ENRICHMENT ingester, not a bulk/delta fetcher. It looks up
+  # one DOI at a time (CROSSREF_DOI=...) or drains a batch from the
+  # crossref_enrich_queue table the processor populates. No MAX_PER_RUN knob.
