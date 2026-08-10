@@ -2,6 +2,7 @@
 
 # EvidenceLens
 
+[![Live Demo](https://img.shields.io/badge/Demo-Live-green.svg)](https://evidencelens.pages.dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
@@ -14,7 +15,7 @@ A free, public, agentic biomedical evidence search engine that unifies the liter
 
 ## Visuals
 
-![Project Screenshot](path/to/screenshot.png)
+![Project Screenshot](Screenshot.png)
 
 <!--
 Best screenshot: the main search results view showing a query (e.g. "statins cardiovascular outcomes"),
